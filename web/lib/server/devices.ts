@@ -31,6 +31,8 @@ export function summarize(d: DeviceRow, now = Date.now()): DeviceSummary {
     status: st,
     statusFetchedAt: st ? (statusFetchedAt(d.id) ?? null) : null,
     agentRole: st?.health?.role ?? null,
+    enrollError: d.enrollError,
+    enrollAttemptAt: d.enrollAttemptAt,
     warnings: deviceWarnings(d),
   };
 }
@@ -59,6 +61,9 @@ export function deviceWarnings(d: DeviceRow): string[] {
         ? 'arm-free primary mode has no standby, but this agent is still a standby. Re-run install-arm-free.sh --mode arm-free to migrate /etc/orbit/agent.json to role "primary".'
         : "arm-free primary mode has no standby. Remove the device and add it again as a Replica.",
     );
+  }
+  if (d.role === "primary" && getSettings().primaryMode === "arm-free" && localAgentId() && d.id !== localAgentId()) {
+    out.push("In arm-free mode only arm-free is the primary host. Remove this device and add it again as a Replica.");
   }
   if (d.role === "replica" && Object.keys(d.replicaPaths).length === 0) {
     out.push(
@@ -110,15 +115,36 @@ async function syncthingIdOf(d: DeviceRow): Promise<string | null> {
   return id;
 }
 
+/**
+ * The device that holds the Send Only source folders: in arm-free mode always the hub's own host
+ * (whatever role its agent.json still claims), otherwise the device with role "primary".
+ */
+export function primaryHost(): DeviceRow | null {
+  if (getSettings().primaryMode === "arm-free") {
+    const id = localAgentId();
+    const local = id ? getDevice(id) : null;
+    if (local) return local;
+  }
+  return primaryDevice();
+}
+
 /** Pair a replica/standby with the primary. Returns null on success, else the error text (pending_pair stays set). */
 export async function pairWithPrimary(dev: DeviceRow): Promise<string | null> {
   try {
-    const primary = primaryDevice();
-    if (!primary) throw new Error("no primary device registered");
+    const primary = primaryHost();
+    if (!primary) {
+      throw new Error(getSettings().primaryMode === "arm-free"
+        ? "arm-free (the primary host) is not registered: ORBIT_LOCAL_AGENT_CONFIG is not set or its agent.json is unreadable"
+        : "no primary device registered");
+    }
+    if (primary.id === dev.id) {
+      updateDevice(dev.id, { pendingPair: false, pairError: null });
+      return null; // the primary host is the source, nothing to pair
+    }
     if (!primary.enrolled) throw new Error(`primary "${primary.name}" is not enrolled yet`);
     const [primaryStId, devStId] = await Promise.all([syncthingIdOf(primary), syncthingIdOf(dev)]);
-    if (!primaryStId) throw new Error("primary Syncthing device id unknown");
-    if (!devStId) throw new Error("device Syncthing device id unknown");
+    if (!primaryStId) throw new Error(`Syncthing device id of ${primary.name} unknown (its agent is offline or cannot reach Syncthing)`);
+    if (!devStId) throw new Error(`Syncthing device id of ${dev.name} unknown (Syncthing not running on it yet, or the agent cannot reach it)`);
     const settings = getSettings();
     const folders = settings.sharedFolders;
     const armFree = settings.primaryMode === "arm-free";
@@ -187,7 +213,13 @@ export function createDevice(name: string, role: DeviceRole, platform: Platform 
   return insertDevice({ id: uniqueId(name), name, role, token: newToken(), platform, replicaPaths });
 }
 
-/** Register the host's own agent (arm-free) from a mounted agent.json. */
+const g = globalThis as unknown as { __orbitLocalSig?: string; __orbitLocalWarned?: string };
+
+/**
+ * Register / reconcile the host's own agent (arm-free) from the mounted agent.json. Called at startup
+ * and on every poll tick, so a mode change or an agent.json migration is picked up without a restart.
+ * In arm-free mode this host is always the primary, even if its agent.json still says "standby".
+ */
 export function registerLocalAgent(): void {
   const file = process.env.ORBIT_LOCAL_AGENT_CONFIG;
   if (!file) return;
@@ -195,16 +227,25 @@ export function registerLocalAgent(): void {
     const cfg = JSON.parse(readFileSync(file, "utf8")) as { deviceId?: string; name?: string; role?: DeviceRole; token?: string };
     if (!cfg.deviceId || !cfg.token) throw new Error("agent.json needs deviceId and token");
     const agentUrl = process.env.ORBIT_LOCAL_AGENT_URL ?? "http://host.docker.internal:7420";
-    const role: DeviceRole = cfg.role ?? (getSettings().primaryMode === "arm-free" ? "primary" : "standby");
+    const armFree = getSettings().primaryMode === "arm-free";
+    const role: DeviceRole = armFree ? "primary" : (cfg.role ?? "standby");
+    if (armFree && cfg.role && cfg.role !== "primary" && g.__orbitLocalWarned !== cfg.role) {
+      g.__orbitLocalWarned = cfg.role;
+      console.warn(`[hub] arm-free mode: ${file} says role "${cfg.role}"; treating this host as the primary. Re-run install-arm-free.sh --mode arm-free to migrate agent.json.`);
+    }
     // arm-free mode: Immich runs here; the installer puts its tailnet URL in ORBIT_IMMICH_URL.
     const immichUrl = role === "primary" ? process.env.ORBIT_IMMICH_URL?.trim() || undefined : undefined;
+    const sig = JSON.stringify([cfg.deviceId, cfg.name, role, cfg.token, agentUrl, immichUrl]);
+    if (sig === g.__orbitLocalSig && getDevice(cfg.deviceId)) return;
     const patch = {
       name: cfg.name ?? cfg.deviceId, role, token: cfg.token, agentUrl, enrolled: true,
       platform: "linux" as Platform, immichTailscaleUrl: immichUrl,
+      ...(role === "primary" ? { pendingPair: false, pairError: null } : {}),
     };
     if (getDevice(cfg.deviceId)) updateDevice(cfg.deviceId, patch);
-    else insertDevice({ id: cfg.deviceId, ...patch, pendingPair: needsPairing(patch.role) });
-    console.log(`[hub] local agent "${cfg.deviceId}" registered at ${agentUrl}`);
+    else insertDevice({ id: cfg.deviceId, ...patch, pendingPair: needsPairing(role) });
+    g.__orbitLocalSig = sig;
+    console.log(`[hub] local agent "${cfg.deviceId}" registered at ${agentUrl} as ${role}`);
   } catch (e) {
     console.warn("[hub] local agent auto-registration failed:", errMsg(e));
   }

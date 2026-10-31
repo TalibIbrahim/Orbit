@@ -6,6 +6,8 @@ import type { AlertEvent, DeviceRecord } from "@orbit/shared";
 export interface DeviceRow extends DeviceRecord {
   token: string;
   pairError: string | null;
+  enrollError: string | null;
+  enrollAttemptAt: number | null;
   pendingPair: boolean;
   agentVersion: string | null;
 }
@@ -43,6 +45,8 @@ function open(): DatabaseSync {
   const cols = (db.prepare("PRAGMA table_info(devices)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("replica_paths")) db.exec("ALTER TABLE devices ADD COLUMN replica_paths TEXT");
   if (!cols.includes("pair_error")) db.exec("ALTER TABLE devices ADD COLUMN pair_error TEXT");
+  if (!cols.includes("enroll_error")) db.exec("ALTER TABLE devices ADD COLUMN enroll_error TEXT");
+  if (!cols.includes("enroll_attempt_at")) db.exec("ALTER TABLE devices ADD COLUMN enroll_attempt_at INTEGER");
   return db;
 }
 
@@ -78,6 +82,8 @@ function toDevice(r: Row): DeviceRow {
     replicaPaths: parsePaths(r.replica_paths),
     token: r.token as string,
     pairError: (r.pair_error as string) ?? null,
+    enrollError: (r.enroll_error as string) ?? null,
+    enrollAttemptAt: (r.enroll_attempt_at as number) ?? null,
     pendingPair: !!r.pending_pair,
     agentVersion: (r.agent_version as string) ?? null,
   };
@@ -86,7 +92,7 @@ function toDevice(r: Row): DeviceRow {
 /** Strip server-only fields. */
 export function toRecord(d: DeviceRow): DeviceRecord {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { token, pendingPair, agentVersion, pairError, ...rec } = d;
+  const { token, pendingPair, agentVersion, pairError, enrollError, enrollAttemptAt, ...rec } = d;
   return rec;
 }
 
@@ -105,7 +111,7 @@ export const primaryDevice = (): DeviceRow | null => listDevices().find((d) => d
 const COLS: Record<string, string> = {
   name: "name", role: "role", platform: "platform", agentUrl: "agent_url", enrolled: "enrolled",
   lastSeen: "last_seen", syncthingDeviceId: "syncthing_device_id", immichLanUrl: "immich_lan_url",
-  immichTailscaleUrl: "immich_tailscale_url", token: "token", replicaPaths: "replica_paths", pairError: "pair_error", pendingPair: "pending_pair", agentVersion: "agent_version",
+  immichTailscaleUrl: "immich_tailscale_url", token: "token", replicaPaths: "replica_paths", pairError: "pair_error", enrollError: "enroll_error", enrollAttemptAt: "enroll_attempt_at", pendingPair: "pending_pair", agentVersion: "agent_version",
 };
 
 export function insertDevice(d: Pick<DeviceRow, "id" | "name" | "role" | "token"> & Partial<DeviceRow>): DeviceRow {

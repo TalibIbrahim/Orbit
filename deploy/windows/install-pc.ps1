@@ -121,6 +121,24 @@ if (Have "tailscale") { $ip = (& tailscale ip -4 2>$null | Select-Object -First 
 
 $cfgPath = "$env:ProgramData\Orbit\agent.json"
 if (-not (Test-Path $cfgPath)) {
+  # New agent.json: stop any running agent and drop stale state (persisted "enrolled" flag).
+  try { Stop-ScheduledTask -TaskName "Orbit Agent" -ErrorAction Stop } catch { }
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*orbit-agent.mjs*" } |
+    ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
+  for ($i = 0; $i -lt 20; $i++) {
+    $left = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -like "*orbit-agent.mjs*" })
+    if ($left.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  $staleData = "$env:ProgramData\Orbit\data"
+  if (Test-Path -LiteralPath $staleData) {
+    try {
+      Remove-Item -LiteralPath $staleData -Recurse -Force -ErrorAction Stop
+      Write-Host "  cleared old agent state ($staleData)"
+    } catch { Write-Warning "could not clear old agent state ($staleData): $($_.Exception.Message)" }
+  }
   $syncCfg = Join-Path $env:LOCALAPPDATA "Syncthing\config.xml"   # Syncthing runs as the installing user
   $cfg = [ordered]@{
     deviceId = $DeviceId

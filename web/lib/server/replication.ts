@@ -1,14 +1,14 @@
 import type { ReplicaHealth, ReplicaState, ReplicationHealth, SyncthingSummary } from "@orbit/shared";
 import { cachedOnly } from "./agents";
-import { db, listDevices, primaryDevice } from "./db";
-import { deviceWarnings, ONLINE_MS, replicaFolderIssue } from "./devices";
+import { db, listDevices } from "./db";
+import { deviceWarnings, ONLINE_MS, primaryHost, replicaFolderIssue } from "./devices";
 import { getSettings } from "./settings";
 
 interface SyncRow { device_id: string; folder_id: string; last_in_sync_at: number | null; last_completion: number | null }
 
 /** Update replica_sync from the primary's /syncthing peers (called by the poller). */
 export function updateReplicaSync(now = Date.now()): void {
-  const primary = primaryDevice();
+  const primary = primaryHost();
   if (!primary) return;
   const st = cachedOnly<SyncthingSummary>(primary.id, "/syncthing");
   if (!st?.folders) return;
@@ -28,13 +28,14 @@ export function updateReplicaSync(now = Date.now()): void {
 
 export function computeReplication(now = Date.now()): ReplicationHealth {
   const devices = listDevices();
-  const primary = devices.find((d) => d.role === "primary") ?? null;
+  const host = primaryHost();
+  const primary = host ? (devices.find((d) => d.id === host.id) ?? null) : null;
   const pst = primary ? cachedOnly<SyncthingSummary>(primary.id, "/syncthing") : null;
   const settings = getSettings();
   const sync = db().prepare("SELECT * FROM replica_sync").all() as unknown as SyncRow[];
   const sharedIds = new Set([...settings.sharedFolders.map((f) => f.id), ...(pst?.folders ?? []).map((f) => f.id)]);
 
-  const replicas: ReplicaHealth[] = devices.filter((d) => d.role !== "primary").map((d) => {
+  const replicas: ReplicaHealth[] = devices.filter((d) => d.id !== primary?.id && d.enrolled).map((d) => {
     const online = d.lastSeen != null && now - d.lastSeen < ONLINE_MS;
     const own = cachedOnly<SyncthingSummary>(d.id, "/syncthing");
     const ids = [...sharedIds].filter((id) => own?.folders.some((f) => f.id === id) || pst?.folders.some((f) => f.id === id));

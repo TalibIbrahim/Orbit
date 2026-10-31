@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AUTH_COOKIE, authToken, safeEqual } from "@/lib/server/auth";
 
 const OPEN = [
-  /^\/login$/, /^\/api\/login$/, /^\/api\/enroll$/, /^\/api\/agent\/version$/, /^\/agent\//, /^\/install\//,
+  /^\/login$/, /^\/api\/login$/, /^\/api\/agent\/version$/, /^\/agent\//, /^\/install\//,
   /^\/manifest\.webmanifest$/, /^\/icons\//, /^\/sw\.js$/, /^\/_next\//, /^\/favicon\.ico$/, /^\/icon\.svg$/, /^\/offline/,
 ];
 
@@ -11,6 +11,8 @@ export function proxy(req: NextRequest) {
   if (!password) return NextResponse.next();
   const { pathname, search } = req.nextUrl;
   if (OPEN.some((r) => r.test(pathname))) return NextResponse.next();
+  // Agents enroll with their device token (checked by the route); reading enroll diagnostics needs login.
+  if (pathname === "/api/enroll" && req.method === "POST") return NextResponse.next();
 
   const cookie = req.cookies.get(AUTH_COOKIE)?.value;
   if (cookie && safeEqual(cookie, authToken(password))) return NextResponse.next();

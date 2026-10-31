@@ -1,10 +1,14 @@
 "use client";
 
-import { defaultReplicaPath, type AddDeviceResponse, type DeviceRole, type DeviceSummary, type HubSettings, type Platform } from "@orbit/shared";
+import {
+  defaultReplicaPath, type AddDeviceResponse, type DeviceRole, type DeviceSummary, type HubSettings, type Platform,
+  type RejectedEnroll,
+} from "@orbit/shared";
 import { Check, Copy, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { DeviceWarnings } from "@/components/devices/device-list";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -14,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { apiGet, apiSend } from "@/lib/api";
+import { timeAgo } from "@/lib/format";
 import { pickRole, useDevices, usePrimaryMode } from "@/lib/hooks";
 import { usePoll } from "@/lib/use-poll";
 import { cn } from "@/lib/utils";
@@ -63,9 +68,21 @@ function CodeBlock({ text }: { text: string }) {
   );
 }
 
-function PairStep({ deviceId, primary }: { deviceId: string; primary: DeviceSummary | undefined }) {
+const STALL_MS = 90_000;
+
+function PairStep({ deviceId, primary, hubUrl }: { deviceId: string; primary: DeviceSummary | undefined; hubUrl: string }) {
+  const [waitedLong, setWaitedLong] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setWaitedLong(true), STALL_MS);
+    return () => clearTimeout(t);
+  }, []);
   const { data } = usePoll(() => apiGet<DeviceSummary>(`/api/devices/${encodeURIComponent(deviceId)}`), 3000, [deviceId]);
   const enrolled = data?.enrolled ?? false;
+  const rejectedPoll = usePoll(() => (enrolled ? Promise.resolve({ rejected: [] }) : apiGet<{ rejected: RejectedEnroll[] }>("/api/enroll")), 5000, [enrolled]);
+  // Only attempts made after this device was created can be about it.
+  const rejected = (rejectedPoll.data?.rejected ?? []).filter((r) => data && r.at >= data.createdAt);
+  const stalled = !enrolled && waitedLong;
+  const win = data?.platform === "windows";
 
   if (!enrolled) {
     return (
@@ -78,11 +95,50 @@ function PairStep({ deviceId, primary }: { deviceId: string; primary: DeviceSumm
           <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
         </div>
         <p className="text-sm text-muted-foreground">Run the install command on the device. This page updates automatically.</p>
+        {data?.enrollError ? (
+          <Alert variant="destructive">
+            <TriangleAlert />
+            <AlertTitle>The agent&apos;s enroll request failed {timeAgo(data.enrollAttemptAt)}</AlertTitle>
+            <AlertDescription>{data.enrollError}</AlertDescription>
+          </Alert>
+        ) : null}
+        {rejected.map((r) => (
+          <Alert key={`${r.hostname}-${r.at}`}>
+            <TriangleAlert className="text-warning" />
+            <AlertTitle>Rejected enroll from {r.hostname} {timeAgo(r.at)}</AlertTitle>
+            <AlertDescription>
+              {r.reason}. That agent still uses an old agent.json{r.deviceId ? ` (device "${r.deviceId}")` : ""}. Re-run the
+              install command above on it: it backs up and replaces agent.json and clears the old agent state.
+            </AlertDescription>
+          </Alert>
+        ))}
+        {stalled && !data?.enrollError && rejected.length === 0 ? (
+          <Alert>
+            <TriangleAlert className="text-warning" />
+            <AlertTitle>No enroll request has reached the hub yet</AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>
+                  Check the agent log for <code>[enroll]</code> lines:{" "}
+                  <code>{win ? "C:\\ProgramData\\Orbit\\logs\\agent.log" : "journalctl -u orbit-agent | grep enroll"}</code>. Each attempt
+                  is logged with the HTTP status or the network error.
+                </li>
+                <li>
+                  From the device, the hub must answer: <code>{win ? `irm ${hubUrl}/api/agent/version` : `curl ${hubUrl}/api/agent/version`}</code>
+                </li>
+                <li>
+                  <code>hubUrl</code> in the device&apos;s agent.json must be <code>{hubUrl}</code>. Re-running the install command fixes it.
+                </li>
+              </ul>
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </div>
     );
   }
 
   const primaryOffline = primary && !primary.online;
+  const warnings = data?.warnings ?? [];
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -93,6 +149,8 @@ function PairStep({ deviceId, primary }: { deviceId: string; primary: DeviceSumm
       </div>
       {data?.role === "primary" ? (
         <p className="text-sm text-muted-foreground">This is the primary device; replicas will pair with it as they enroll.</p>
+      ) : warnings.length ? (
+        <DeviceWarnings warnings={warnings} />
       ) : primaryOffline ? (
         <Alert>
           <TriangleAlert className="text-warning" />
@@ -103,7 +161,7 @@ function PairStep({ deviceId, primary }: { deviceId: string; primary: DeviceSumm
         </Alert>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Paired with {primary?.name ?? "the primary"} - receiving Immich library as Receive Only with versioning.
+          Paired with {primary?.name ?? "the primary"} - receiving the Immich library as Receive Only with versioning.
         </p>
       )}
       <Link href="/devices" className={cn(buttonVariants())}>
@@ -316,7 +374,13 @@ export default function AddDevicePage() {
             </div>
           ) : null}
 
-          {step === 2 && created ? <PairStep deviceId={created.device.id} primary={pickRole(devices, "primary")} /> : null}
+          {step === 2 && created ? (
+            <PairStep
+              deviceId={created.device.id}
+              primary={pickRole(devices, "primary")}
+              hubUrl={/(https?:\/\/\S+?)\/install\//.exec(created.linuxCommand)?.[1] ?? "<hub-url>"}
+            />
+          ) : null}
         </CardContent>
       </Card>
     </div>

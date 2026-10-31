@@ -17,6 +17,7 @@ ST_HOME="${ORBIT_HOME}/syncthing"
 REPLICA_ROOT=/srv/orbit/replicas
 AGENT_DIR=/opt/orbit/agent
 CFG=/etc/orbit/agent.json
+DATA_DIR=/var/lib/orbit
 
 log() { printf '[orbit] %s\n' "$*"; }
 die() { printf '[orbit] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -158,11 +159,15 @@ if [ -f "$CFG" ]; then
   fi
 fi
 if [ ! -f "$CFG" ]; then
+  # New identity: stop the agent and drop its old state (persisted "enrolled" flag etc.).
+  systemctl stop orbit-agent 2>/dev/null || true
+  rm -f "${DATA_DIR}/orbit-agent.db" "${DATA_DIR}/orbit-agent.db-wal" "${DATA_DIR}/orbit-agent.db-shm"
+  log "cleared old agent state"
   LISTEN_HOST="${TS_IP:-0.0.0.0}"
   jq -n --arg id "$DEVICE_ID" --arg name "$DEVICE_NAME" --arg role "$ROLE" --arg token "$TOKEN" \
-        --arg host "$LISTEN_HOST" --arg hub "$HUB_URL" --arg cfg "${ST_HOME}/config.xml" \
+        --arg host "$LISTEN_HOST" --arg hub "$HUB_URL" --arg cfg "${ST_HOME}/config.xml" --arg data "$DATA_DIR" \
     '{deviceId:$id, name:$name, role:$role, token:$token,
-      listen:{host:$host, port:7420}, hubUrl:$hub, dataDir:"/var/lib/orbit",
+      listen:{host:$host, port:7420}, hubUrl:$hub, dataDir:$data,
       sampleIntervalSec:60, sizeIntervalMin:10, retentionDays:35, autoUpdate:true,
       services:[], syncthing:{url:"http://127.0.0.1:8384", configPath:$cfg}, jobs:[]}' > "${CFG}.tmp"
   mv "${CFG}.tmp" "$CFG"
@@ -202,4 +207,5 @@ echo "  tailscale  : ${TS_IP:-NOT CONNECTED - run 'sudo tailscale up'}"
 echo "  syncthing  : syncthing@${ORBIT_USER} (GUI 127.0.0.1:8384, config ${ST_HOME}/config.xml)"
 echo "  replicas   : ${REPLICA_ROOT}"
 echo "  agent      : systemctl status orbit-agent   (port 7420)"
+echo "  If the device stays 'Waiting for install' in the hub:  journalctl -u orbit-agent | grep enroll"
 echo "The agent enrolls with ${HUB_URL} on start; the hub then pairs Syncthing automatically."

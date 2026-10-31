@@ -416,7 +416,9 @@ export interface DeviceSummary extends DeviceRecord {
   online: boolean;
   status: AgentStatus | null; // last known
   statusFetchedAt: number | null;
-  agentRole: DeviceRole | null; // role the agent itself reports (agent.json); differs from `role` after a relabel or stale config
+  agentRole: DeviceRole | null;
+  enrollError: string | null; // last failed enroll attempt with this device's token
+  enrollAttemptAt: number | null; // last enroll attempt (ok or not) // role the agent itself reports (agent.json); differs from `role` after a relabel or stale config
   warnings: string[]; // configuration problems worth showing on the device card
 }
 
@@ -451,6 +453,8 @@ export interface EnrollRequest {
   platform: Platform;
   agentVersion: string;
   syncthingDeviceId: string | null;
+  deviceId?: string; // from agent.json (diagnostics; the token decides which device this is)
+  role?: DeviceRole; // from agent.json
 }
 export interface EnrollResponse {
   device: DeviceRecord;
@@ -565,3 +569,13 @@ export const TB = 1024 ** 4;
 export function defaultReplicaPath(folderId: string, platform: Platform | null): string {
   return platform === "windows" ? `C:\\OrbitReplicas\\${folderId}` : `/srv/orbit/replicas/${folderId}`;
 }
+
+/** An enroll attempt the hub rejected because the token is unknown (agent with a stale agent.json). */
+export interface RejectedEnroll {
+  at: number;
+  hostname: string;
+  deviceId: string | null; // what the agent's agent.json says
+  agentUrl: string | null;
+  reason: string;
+}
+// GET    /api/enroll                                    -> { rejected: RejectedEnroll[] } (last 30 min)

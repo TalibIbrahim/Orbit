@@ -24,6 +24,7 @@ async function pollDevice(d: DeviceRow, slow: boolean): Promise<void> {
 
 async function tick(n: number): Promise<void> {
   const slow = n % SLOW_EVERY === 0;
+  registerLocalAgent(); // picks up mode changes / a migrated agent.json
   const devices = listDevices();
   await Promise.all(devices.map((d) => pollDevice(d, slow).catch((e) => console.warn(`[poll] ${d.id}:`, errMsg(e)))));
   for (const d of listDevices()) {
