@@ -15,6 +15,7 @@ import { createSyncthing, registerSyncthingRoutes } from "./syncthing.ts";
 import { startJobs, registerBackupRoutes } from "./jobs.ts";
 import { createKeepalive, registerKeepaliveRoutes } from "./keepalive.ts";
 import { registerManifestRoutes } from "./manifest.ts";
+import { registerSyncHoldRoutes, startSyncHold } from "./synchold.ts";
 import { registerPromoteRoutes } from "./promote.ts";
 import { startUpdater, registerUpdateRoutes, enrollWithHub } from "./updater.ts";
 
@@ -38,6 +39,7 @@ async function main() {
   registerPromoteRoutes(router, ctx);
   registerManifestRoutes(router, ctx);
   registerUpdateRoutes(router, ctx);
+  registerSyncHoldRoutes(router, ctx);
 
   const server = startServer(router, { host: config.listen.host, port: config.listen.port, token: config.token });
 
@@ -45,6 +47,7 @@ async function main() {
   startSizer(ctx);
   startFolderEnforcer(ctx);
   startJobs(ctx);
+  startSyncHold(ctx);
   startUpdater(ctx);
   pruneOld(db, config.retentionDays);
   setInterval(() => pruneOld(db, config.retentionDays), 6 * 3_600_000).unref();

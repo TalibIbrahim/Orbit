@@ -734,3 +734,50 @@ export interface ImmichVerifySettings {
 // GET  /api/backup-verify/runs/:id     -> VerificationRun
 // GET  /api/immich/users               -> { id: string; name: string; email: string }[] (users the key can see)
 // POST /api/immich/test  { url?, apiKey? } -> { ok: boolean; error?: string; version?: string }
+
+// ───────────────────────────── Sync control: pause everywhere + schedule ─────────────────────────────
+
+/** A window in which syncing is ALLOWED. Outside every window sync is paused (when the schedule is enabled). */
+export interface SyncWindow {
+  days: number[]; // 0 = Sunday ... 6 = Saturday; the day the window starts
+  start: string; // "HH:MM" (24 h) local time in SyncSchedule.timezone
+  end: string; // "HH:MM"; end <= start = runs past midnight into the next day (start == end = 24 h)
+}
+export interface SyncSchedule {
+  enabled: boolean;
+  timezone: string; // IANA, e.g. "Europe/Berlin" (taken from the browser that saved it)
+  windows: SyncWindow[];
+}
+
+export type SyncHoldReason = "manual" | "schedule";
+
+/** Agent side: hold that pauses the shared Syncthing folders (independent of folder-limit pauses). */
+export interface SyncHoldRequest {
+  paused: boolean;
+  folderIds: string[]; // shared folders, e.g. ["immich-library", "immich-db-dumps"]
+  reason: SyncHoldReason | null; // null when paused = false
+}
+export interface SyncHoldState {
+  paused: boolean;
+  reason: SyncHoldReason | null;
+  folderIds: string[];
+  since: number | null;
+  folders: { id: string; paused: boolean | null; error?: string }[]; // actual Syncthing state (null = folder not on this device)
+}
+// Agent routes (Bearer):
+// GET  /v1/sync/hold                    -> SyncHoldState
+// POST /v1/sync/hold   SyncHoldRequest  -> SyncHoldState (applies immediately; re-applied after restarts)
+
+/** Hub side. */
+export interface SyncControlState {
+  pausedByUser: boolean; // "Pause sync" button
+  pausedAt: number | null;
+  schedule: SyncSchedule;
+  scheduleAllowsNow: boolean; // true when the schedule is off or now is inside a window
+  effectivePaused: boolean; // pausedByUser || !scheduleAllowsNow
+  reason: SyncHoldReason | null;
+  nextChange: number | null; // when the schedule next flips (null = never / schedule off)
+  devices: { id: string; name: string; online: boolean; applied: boolean | null; error?: string }[];
+}
+// GET  /api/sync-control                                      -> SyncControlState
+// POST /api/sync-control  { paused?: boolean; schedule?: SyncSchedule } -> SyncControlState

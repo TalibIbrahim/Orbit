@@ -8,6 +8,7 @@ import { bundleInfo } from "./bundle";
 import { db, listDevices, toAlert } from "./db";
 import { COLORS, notify } from "./notify";
 import { computeReplication } from "./replication";
+import { syncPausedOnPurpose } from "./sync-control";
 import { latestRun } from "./verify";
 import { getSettings } from "./settings";
 
@@ -83,7 +84,8 @@ function collect(now: number): Cond[] {
     add("backup-verify", c.hashMismatch ? "critical" : "warning", c.deviceId, "", `Photo backup problem on ${c.name}`, `${parts.join(", ")} (Orbit -> Offload).${first ? `\n${first}` : ""}`);
   }
 
-  for (const r of computeReplication(now).replicas) {
+  // While sync is paused by the user or the schedule, replicas are expected to fall behind.
+  if (!syncPausedOnPurpose(now)) for (const r of computeReplication(now).replicas) {
     for (const f of r.folders) {
       if (f.lagMs != null && f.lagMs > t.replicaBehindHours * H)
         add("replica-behind", "warning", r.deviceId, f.folderId, `Replica behind: ${r.name} / ${f.label}`, `${r.name} has not been fully in sync for ${ago(f.lagMs)} (threshold ${t.replicaBehindHours} h).`);

@@ -90,7 +90,7 @@ export default function OffloadPage() {
             <CardContent className="text-sm text-muted-foreground">
               Phone backup verification is not set up.{" "}
               <Link href="/settings?tab=immich" className="font-medium text-primary hover:underline">
-                Settings, Immich
+                Settings → Immich
               </Link>
             </CardContent>
           </Card>

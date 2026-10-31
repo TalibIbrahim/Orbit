@@ -380,6 +380,16 @@ The standby has no machine-learning container. After promoting, also disable ML 
 | `IMMICH_SERVER_CPUS`, `IMMICH_ML_CPUS`, `IMMICH_ML_MEM` | `1.5`, `1.0`, `3g` |
 | `IMMICH_CONFIG_FILE` | `/config/immich.json` (the generated `immich-config.json`; its settings are read-only in the admin UI) |
 
+
+### Pause sync and sync schedule
+
+- **Pause Sync** (Overview): pauses the shared Syncthing folders (`immich-library`, `immich-db-dumps`) on every device, arm-free included. The button turns into **Resume Sync**. Devices that are offline get the pause when they come back online.
+- **Schedule** (Overview -> Sync -> Schedule...): choose the days and times when syncing is allowed (for example nights 01:00-07:00, or weekends). Outside those windows sync is paused everywhere; windows such as 22:00-06:00 run past midnight. Times use the timezone of the browser that saved the schedule.
+- The Pause Sync button always wins over the schedule; resuming hands control back to the schedule.
+- How it works: the hub pushes a "sync hold" to each agent (`POST /v1/sync/hold`), which pauses or resumes only those folders in Syncthing and re-applies the hold every 5 minutes and after restarts. A folder-limit pause ("Pause sync" mode in Folders) is independent: Orbit never resumes a folder while your pause or the schedule holds it, and never resumes a folder that a full folder limit is holding.
+- While sync is paused on purpose, "replica behind" alerts stay quiet, and phone backup verification reports the copies as "sync paused" (not safe to offload until they have caught up).
+- Devices with an agent older than this feature show "agent too old for sync control" until they update themselves from the hub.
+
 ### restic
 
 The `restic` job in `/etc/orbit/agent.json` runs daily at 03:00 on arm-free: `restic backup /srv/orbit/immich-db-dumps /etc/orbit/agent.json --tag orbit`. Note `agent.json` contains the agent token and the restic password file lives in `/etc/orbit`, so store that password in your password manager too. Set it up:

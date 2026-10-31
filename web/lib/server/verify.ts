@@ -18,6 +18,7 @@ import { immichSnapshot, immichUsers, type ImmichConn, ImmichError } from "./imm
 import { COLORS, notify } from "./notify";
 import { computeReplication } from "./replication";
 import { getSettings, immichApiKey } from "./settings";
+import { desiredHold } from "./sync-control";
 
 const FOLDER = "immich-library";
 const DUMPS_FOLDER = "immich-db-dumps";
@@ -112,7 +113,10 @@ function syncState(d: DeviceRow, isHost: boolean): { syncOk: boolean; issues: st
   if (!own?.available) issues.push("Syncthing not reachable");
   else if (!folder) issues.push("Immich library folder not shared with this device");
   else {
-    if (folder.paused) issues.push("Immich library folder is paused");
+    if (folder.paused) {
+      const hold = desiredHold();
+      issues.push(hold.paused ? `sync paused ${hold.reason === "manual" ? "by you (Pause sync)" : "by the sync schedule"}` : "Immich library folder is paused");
+    }
     if (folder.state === "error") issues.push("Syncthing reports a folder error");
   }
   let versioning = true;

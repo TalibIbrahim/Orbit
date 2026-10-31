@@ -4,6 +4,7 @@ import { type DeviceRow, listDevices } from "./db";
 import { needsPairing, pairWithPrimary, registerLocalAgent } from "./devices";
 import { immichNewestUpload } from "./immich";
 import { getSettings, immichApiKey } from "./settings";
+import { applySyncControl } from "./sync-control";
 import { verifyTick } from "./verify";
 import { updateReplicaSync } from "./replication";
 
@@ -36,6 +37,8 @@ async function tick(n: number): Promise<void> {
       else console.log(`[poll] paired ${d.id} with primary`);
     }
   }
+  // Pause sync / schedule: push the desired hold to devices (re-asserted every 10 min).
+  await applySyncControl().catch((e) => console.warn("[sync-control]", errMsg(e)));
   updateReplicaSync();
   await evaluateAlerts();
   // Phone backup verification: scheduled runs + a run after an upload batch settles (read-only).

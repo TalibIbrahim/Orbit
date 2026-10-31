@@ -1,6 +1,6 @@
 "use client";
 
-import type { BackupVerifyResponse, Cached, DeviceRole, DeviceSummary, HubSettings, PrimaryMode } from "@orbit/shared";
+import type { BackupVerifyResponse, Cached, SyncControlState, SyncSchedule, DeviceRole, DeviceSummary, HubSettings, PrimaryMode } from "@orbit/shared";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { agentGet, apiGet, apiSend } from "@/lib/api";
@@ -63,4 +63,37 @@ export function useBackupVerify() {
     }
   }, [refresh]);
   return { ...poll, verifyNow, busy: starting || (poll.data?.running ?? false) };
+}
+
+/** Hub-wide sync control (pause everywhere + schedule). Polls every 15 s. */
+export function useSyncControl(intervalMs = 15_000) {
+  const poll = usePoll(() => apiGet<SyncControlState>("/api/sync-control"), intervalMs);
+  const [busy, setBusy] = useState(false);
+  const { refresh } = poll;
+  const send = useCallback(
+    async (body: { paused?: boolean; schedule?: SyncSchedule }) => {
+      setBusy(true);
+      try {
+        const r = await apiSend<SyncControlState>("POST", "/api/sync-control", body);
+        await refresh();
+        return r;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+  const setPaused = useCallback(
+    async (paused: boolean) => {
+      try {
+        await send({ paused });
+        toast.success(paused ? "Sync paused on all devices" : "Sync resumed");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not change sync state");
+      }
+    },
+    [send],
+  );
+  const saveSchedule = useCallback((schedule: SyncSchedule) => send({ schedule }), [send]);
+  return { ...poll, busy, setPaused, saveSchedule };
 }

@@ -6,11 +6,12 @@ import { AlertsCard } from "@/components/overview/alerts-card";
 import { GettingStartedCard } from "@/components/overview/getting-started-card";
 import { DeviceTile } from "@/components/overview/device-tile";
 import { PhoneBackupCard } from "@/components/overview/phone-backup-card";
+import { SyncControlCard } from "@/components/overview/sync-control-card";
 import { ReplicationCard } from "@/components/overview/replication-card";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiGet } from "@/lib/api";
-import { pickHost, useAgent, useBackupVerify, useDevices, usePrimaryMode } from "@/lib/hooks";
+import { pickHost, useAgent, useBackupVerify, useDevices, usePrimaryMode, useSyncControl } from "@/lib/hooks";
 import { usePoll } from "@/lib/use-poll";
 
 export default function OverviewPage() {
@@ -18,6 +19,7 @@ export default function OverviewPage() {
   const alerts = usePoll(() => apiGet<AlertsResponse>("/api/alerts"), 30_000);
   const replication = usePoll(() => apiGet<ReplicationHealth>("/api/replication"), 30_000);
   const verify = useBackupVerify();
+  const sync = useSyncControl();
   const { mode } = usePrimaryMode();
   const standby = pickHost(devices.data, mode);
   const idle = useAgent<IdleRisk>(standby?.id, "/idle-risk", 5 * 60_000);
@@ -28,6 +30,12 @@ export default function OverviewPage() {
       <PageHeader title="Overview" description="Everything at a glance" actions={<ImmichLink />} />
       <GettingStartedCard devices={devices.data} replication={replication.data} />
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <SyncControlCard
+          state={sync.data}
+          busy={sync.busy}
+          onSetPaused={(p) => void sync.setPaused(p)}
+          onSaveSchedule={sync.saveSchedule}
+        />
         <PhoneBackupCard data={verify.data} busy={verify.busy} onVerify={() => void verify.verifyNow()} />
         {devices.loading ? (
           <>

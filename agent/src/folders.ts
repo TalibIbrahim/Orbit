@@ -8,6 +8,7 @@ import { HttpError, type Router } from "./http.ts";
 import type { Ctx } from "./context.ts";
 import { diskForPath, latestDisks, linearGrowthPerDay } from "./metrics.ts";
 import { measureFolder } from "./sizes.ts";
+import { isSyncHeld } from "./synchold.ts";
 
 const DAY = 86_400_000;
 const MODES: EnforcementMode[] = ["alert", "pause-sync", "hard"];
@@ -100,6 +101,11 @@ export async function enforceFolders(ctx: Ctx): Promise<void> {
       }
     } else if (r.paused_by_orbit && percent < 95) {
       try {
+        if (isSyncHeld(ctx, r.syncthing_folder_id)) {
+          ctx.db.prepare("UPDATE folders SET paused_by_orbit = 0 WHERE id = ?").run(r.id);
+          console.log(`[folders] ${tag}: limit cleared; sync hold keeps ${r.syncthing_folder_id} paused`);
+          continue;
+        }
         await ctx.syncthing.setFolderPaused(r.syncthing_folder_id, false);
         ctx.db.prepare("UPDATE folders SET paused_by_orbit = 0 WHERE id = ?").run(r.id);
         console.log(`[folders] ${tag}: resumed syncthing folder ${r.syncthing_folder_id}`);
@@ -138,6 +144,10 @@ function validate(input: Partial<FolderLimitInput>, full: boolean): void {
 
 async function resumeIfOrbitPaused(ctx: Ctx, r: Row): Promise<void> {
   if (!r.paused_by_orbit || !r.syncthing_folder_id) return;
+  if (isSyncHeld(ctx, r.syncthing_folder_id)) {
+    console.log(`[folders] ${r.id}: sync hold keeps ${r.syncthing_folder_id} paused`);
+    return;
+  }
   try {
     await ctx.syncthing.setFolderPaused(r.syncthing_folder_id, false);
   } catch (e) {
