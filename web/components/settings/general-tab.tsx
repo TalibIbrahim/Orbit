@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SaveBar } from "./save-bar";
+import { UpdatesCard } from "./updates-card";
 import type { SettingsApi } from "./use-settings";
 
 const APP_VERSION = "0.1.0";
@@ -20,6 +21,7 @@ export function GeneralTab({ api }: { api: SettingsApi }) {
 
   return (
     <div className="space-y-4">
+      <UpdatesCard />
       <Card>
         <CardHeader>
           <CardTitle>Hub</CardTitle>

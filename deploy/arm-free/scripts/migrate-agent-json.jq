@@ -18,6 +18,7 @@ def isRestic: .kind == "restic" or .id == "restic";
 $tpl[0] as $t
 | .role = "primary"
 | del(.promote)
+| .hostUpdate = (.hostUpdate // $t.hostUpdate)
 | (if .keepalive then .keepalive.defaultEnabled = false else . end)
 | .services = ([$t.services[] | select(.name == "immich")]
     + [(.services // [])[] | select((staleSvc | not) and .name != "immich")]

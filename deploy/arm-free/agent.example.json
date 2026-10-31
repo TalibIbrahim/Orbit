@@ -12,6 +12,12 @@
   "networkBandwidthMbps": 2000,
   "storageQuotaGB": 200,
   "autoUpdate": true,
+  "hostUpdate": {
+    "unit": "orbit-update.service",
+    "timer": "orbit-update.timer",
+    "statusFile": "/var/lib/orbit/update-status.json",
+    "repoDir": "/opt/orbit-src"
+  },
   "docker": { "socketPath": "/var/run/docker.sock" },
   "services": [
     {

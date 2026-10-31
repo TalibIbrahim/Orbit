@@ -208,13 +208,25 @@ fi
 
 # --- agent config ------------------------------------------------------------------------
 CFG=/etc/orbit/agent.json
+# Existing config (either mode): add the hostUpdate block (Orbit self-update) when missing.
+if [ -f "$CFG" ] && [ "$(jq -r 'has("hostUpdate")' "$CFG" 2>/dev/null || echo true)" = "false" ]; then
+  jq --arg repo "$REPO_DIR" 'if .hostUpdate then . else .hostUpdate = {unit: "orbit-update.service", timer: "orbit-update.timer", statusFile: "/var/lib/orbit/update-status.json", repoDir: $repo} end' "$CFG" > "${CFG}.new"
+  BAK="${CFG}.bak-$(date +%Y%m%d-%H%M%S)"
+  cp -p "$CFG" "$BAK"
+  cat "${CFG}.new" > "$CFG"
+  rm -f "${CFG}.new"
+  chown root:1000 "$CFG"
+  chmod 640 "$CFG"
+  CFG_CHANGED=1
+  log "added hostUpdate to ${CFG} (backup: ${BAK})"
+fi
 if [ ! -f "$CFG" ]; then
   TOKEN="$(openssl rand -hex 24)"
   DEVICE_ID="${ORBIT_DEVICE_ID:-arm-free}"
   if [ "$MODE" = "arm-free" ]; then TEMPLATE="${ARM_FREE_DIR}/agent.primary.example.json"; else TEMPLATE="${ARM_FREE_DIR}/agent.example.json"; fi
   jq --arg t "$TOKEN" --arg d "$DEVICE_ID" --arg h "${HUB_URL:-http://${TS_IP:-127.0.0.1}:3000}" \
      --arg ip "${TS_IP:-0.0.0.0}" \
-     '.token=$t | .deviceId=$d | .hubUrl=$h | .listen.host=$ip' \
+     --arg repo "$REPO_DIR"      '.token=$t | .deviceId=$d | .hubUrl=$h | .listen.host=$ip | .hostUpdate.repoDir=$repo' \
      "$TEMPLATE" > "${CFG}.tmp"
   mv "${CFG}.tmp" "$CFG"
   # Readable by the orbit-web container (uid 1000), which mounts it to auto-register this agent.
@@ -340,4 +352,5 @@ if [ "$MODE" = "arm-free" ]; then
 else
   echo "  Standby    : NOT running (by design). Fail over with ${OPT}/deploy/arm-free/scripts/promote-standby.sh"
 fi
+echo "  Auto-update: nightly ~04:30 (orbit-update.timer); update now: sudo systemctl start orbit-update.service (or the Update button in Settings)"
 echo "  Next       : close OCI ingress on 22 once 'tailscale ssh' works; pair Syncthing from the hub."

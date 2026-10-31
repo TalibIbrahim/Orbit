@@ -250,3 +250,9 @@ export function registerLocalAgent(): void {
     console.warn("[hub] local agent auto-registration failed:", errMsg(e));
   }
 }
+
+/** The device the hub itself runs on (arm-free), registered from ORBIT_LOCAL_AGENT_CONFIG. */
+export function hubHostDevice(): DeviceRow | null {
+  const id = localAgentId();
+  return id ? getDevice(id) : null;
+}

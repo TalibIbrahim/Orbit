@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Orbit container auto-update
+Description=Nightly Orbit auto-update
 
 [Timer]
 OnCalendar=*-*-* 04:30:00

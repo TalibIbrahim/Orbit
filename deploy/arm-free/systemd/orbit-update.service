@@ -1,5 +1,5 @@
 [Unit]
-Description=Orbit container auto-update (docker compose pull + up)
+Description=Orbit auto-update (code, hub, containers)
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -10,7 +10,7 @@ EnvironmentFile=-/etc/orbit/update.env
 ExecStart=/opt/orbit/deploy/arm-free/scripts/update.sh
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=30min
+TimeoutStartSec=45min
 
 # CPU priority: compose already sets cpu_shares (syncthing 512, orbit-web 256). To change it live without recreating the container:
 #   docker update --cpu-shares 1024 syncthing

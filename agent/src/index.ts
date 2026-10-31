@@ -15,6 +15,7 @@ import { createSyncthing, registerSyncthingRoutes } from "./syncthing.ts";
 import { startJobs, registerBackupRoutes } from "./jobs.ts";
 import { createKeepalive, registerKeepaliveRoutes } from "./keepalive.ts";
 import { registerManifestRoutes } from "./manifest.ts";
+import { registerHostUpdateRoutes } from "./hostupdate.ts";
 import { registerSyncHoldRoutes, startSyncHold } from "./synchold.ts";
 import { registerPromoteRoutes } from "./promote.ts";
 import { startUpdater, registerUpdateRoutes, enrollWithHub } from "./updater.ts";
@@ -38,6 +39,7 @@ async function main() {
   registerKeepaliveRoutes(router, ctx);
   registerPromoteRoutes(router, ctx);
   registerManifestRoutes(router, ctx);
+  registerHostUpdateRoutes(router, ctx);
   registerUpdateRoutes(router, ctx);
   registerSyncHoldRoutes(router, ctx);
 

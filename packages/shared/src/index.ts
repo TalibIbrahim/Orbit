@@ -781,3 +781,33 @@ export interface SyncControlState {
 }
 // GET  /api/sync-control                                      -> SyncControlState
 // POST /api/sync-control  { paused?: boolean; schedule?: SyncSchedule } -> SyncControlState
+
+// ───────────────────────────── Orbit self-update (arm-free) ─────────────────────────────
+
+/** Written by deploy/arm-free/scripts/update.sh to /var/lib/orbit/update-status.json. */
+export interface HostUpdateRun {
+  startedAt: number;
+  finishedAt: number | null;
+  ok: boolean | null; // null while running
+  trigger: "timer" | "manual" | "button" | string;
+  fromCommit: string | null;
+  toCommit: string | null;
+  message: string; // short summary, e.g. "updated 3a1b2c3 -> 9f8e7d6, rebuilt hub" / "already up to date"
+}
+
+export interface HostUpdateStatus {
+  available: boolean; // this agent manages Orbit updates (arm-free with hostUpdate config)
+  running: boolean; // orbit-update.service active
+  current: { commit: string; date: number | null; subject: string } | null; // checked-out code
+  upstream: { commit: string | null; behind: number | null; checkedAt: number | null; error?: string } | null;
+  lastRun: HostUpdateRun | null;
+  nextRun: number | null; // next nightly run (orbit-update.timer)
+  error?: string;
+}
+// Agent routes (Bearer):
+// GET  /v1/host-update          -> HostUpdateStatus
+// POST /v1/host-update/check    -> HostUpdateStatus (git fetch, then status)
+// POST /v1/host-update/run      -> HostUpdateStatus (systemctl start --no-block orbit-update.service)
+// Hub routes:
+// GET  /api/host-update         -> HostUpdateStatus (from arm-free's agent)
+// POST /api/host-update  { action: "check" | "run" } -> HostUpdateStatus

@@ -46,6 +46,7 @@ export interface AgentConfig {
   jobs: JobConfig[];
   keepalive?: { command: string; args?: string[]; defaultEnabled?: boolean }; // defaultEnabled: on until the user turns it off
   promote?: { script: string; args?: string[]; immichUrl: string; dumpDir?: string };
+  hostUpdate?: { unit: string; timer: string; statusFile: string; repoDir: string }; // arm-free Orbit self-update
   autoUpdate: boolean; // poll hub for new agent bundles
 }
 
@@ -63,6 +64,18 @@ export function configPathFromArgv(argv = process.argv): string {
   const i = argv.indexOf("--config");
   if (i !== -1 && argv[i + 1]) return argv[i + 1];
   return process.env.ORBIT_AGENT_CONFIG ?? defaultConfigPath();
+}
+
+function validateHostUpdate(raw: unknown): AgentConfig["hostUpdate"] {
+  if (raw === undefined || raw === null) return undefined;
+  const h = raw as Record<string, unknown>;
+  const name = (v: unknown, kind: string) => typeof v === "string" && new RegExp("^[A-Za-z0-9@._-]+\\." + kind + "$").test(v);
+  const abs = (v: unknown) => typeof v === "string" && v.startsWith("/");
+  if (typeof h === "object" && name(h.unit, "service") && name(h.timer, "timer") && abs(h.statusFile) && abs(h.repoDir)) {
+    return { unit: h.unit as string, timer: h.timer as string, statusFile: h.statusFile as string, repoDir: h.repoDir as string };
+  }
+  console.warn("[config] hostUpdate ignored: needs unit (*.service), timer (*.timer) and absolute statusFile/repoDir");
+  return undefined;
 }
 
 export function loadConfig(path = configPathFromArgv()): AgentConfig {
@@ -95,6 +108,7 @@ export function loadConfig(path = configPathFromArgv()): AgentConfig {
     jobs: raw.jobs ?? [],
     keepalive: raw.keepalive,
     promote: raw.promote,
+    hostUpdate: validateHostUpdate(raw.hostUpdate),
     autoUpdate: raw.autoUpdate ?? true,
   };
 }

@@ -38,4 +38,9 @@ done
 jq 'del(.jobs[] | select(.id == "prune-dumps"))' "$FIX" > "$T/np.json"
 run false "$T/np.json" > "$T/np.out.json"
 check "prune-dumps added when absent" '[.jobs[0].id, .jobs[1].id] == ["immich-db","prune-dumps"] and .jobs[1].schedule == "45 4 * * *"' "$T/np.out.json"
+# hostUpdate: added from the template when missing, existing repoDir wins
+check "hostUpdate added" '.hostUpdate.unit == "orbit-update.service" and .hostUpdate.timer == "orbit-update.timer" and .hostUpdate.statusFile == "/var/lib/orbit/update-status.json"' "$T/a.json"
+jq '.hostUpdate = {unit: "orbit-update.service", timer: "orbit-update.timer", statusFile: "/var/lib/orbit/update-status.json", repoDir: "/home/me/orbit"}' "$FIX" > "$T/hu.json"
+run false "$T/hu.json" > "$T/hu.out.json"
+check "existing hostUpdate.repoDir kept" '.hostUpdate.repoDir == "/home/me/orbit"' "$T/hu.out.json"
 exit $FAIL
