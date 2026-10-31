@@ -109,14 +109,13 @@ export function GeneralTab({ api }: { api: SettingsApi }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Smartphone className="size-4 text-muted-foreground" />
-            Install on iPhone
+            Install on your phone
           </CardTitle>
         </CardHeader>
         <CardContent>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-            <li>Open Orbit in Safari.</li>
-            <li>Tap the Share button.</li>
-            <li>Choose Add to Home Screen, then Add.</li>
+            <li>iOS: open Orbit in Safari, tap Share, then Add to Home Screen.</li>
+            <li>Android: open Orbit in Chrome, open the menu, then Add to Home screen (or Install app).</li>
           </ol>
         </CardContent>
       </Card>

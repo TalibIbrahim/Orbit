@@ -230,7 +230,8 @@ elif [ "$MODE" = "arm-free" ]; then
   # Existing config (e.g. from a device-mode install): migrate it in place to the arm-free primary
   # layout. deviceId, token, hubUrl, listen and any other custom fields are kept.
   #  - role "primary", no promote block, keep-alive not on by default
-  #  - Minecraft services/jobs removed (leftovers from older Orbit versions)
+  #  - stale leftovers removed: jobs whose script (absolute command / *.sh|*.py|*.ps1 arg) no longer
+  #    exists, and services whose Docker containers and systemd units no longer exist on this host
   #  - "immich" service and the 02:30 "immich-db" dump job taken from agent.primary.example.json
   #  - restic jobs kept/added only if /etc/orbit/restic-password exists and a repository is set
   #    (RESTIC_REPOSITORY env, or the value already in the restic job); otherwise removed
@@ -240,18 +241,31 @@ elif [ "$MODE" = "arm-free" ]; then
   REPO="${RESTIC_REPOSITORY:-$CUR_REPO}"
   RESTIC_OK=false
   if [ -f /etc/orbit/restic-password ] && [ -n "$REPO" ] && [[ "$REPO" != REPLACE* ]]; then RESTIC_OK=true; fi
-  jq --slurpfile tpl "${ARM_FREE_DIR}/agent.primary.example.json" --argjson resticOk "$RESTIC_OK" --arg repo "$REPO" '
-    def mc: ([.id, .name, .command] | map(. // "") | join(" ")) | test("minecraft|mc-backup"; "i");
+  # Script paths referenced by jobs that are gone from disk.
+  MISSING="$(jq -r '.jobs[]? | (.command // empty), (.args // [] | .[] | select(type == "string" and test("\\.(sh|py|ps1)$")))' "$CFG" 2>/dev/null \
+    | while IFS= read -r f; do case "$f" in /*) [ -e "$f" ] || printf '%s\n' "$f" ;; esac; done | jq -R . | jq -s -c .)"
+  # Existing containers / units; "null" = unknown (tool unavailable), then nothing is judged stale on it.
+  CONTAINERS=null; UNITS=null
+  if NAMES="$(docker ps -a --format '{{.Names}}' 2>/dev/null)"; then CONTAINERS="$(printf '%s\n' "$NAMES" | sed '/^$/d' | jq -R . | jq -s -c .)"; fi
+  if UNIT_LIST="$(systemctl list-unit-files --no-legend --plain 2>/dev/null | awk '{print $1}')"; then UNITS="$(printf '%s\n' "$UNIT_LIST" | sed '/^$/d' | jq -R . | jq -s -c .)"; fi
+  jq --slurpfile tpl "${ARM_FREE_DIR}/agent.primary.example.json" --argjson resticOk "$RESTIC_OK" --arg repo "$REPO" \
+     --argjson missing "$MISSING" --argjson containers "$CONTAINERS" --argjson units "$UNITS" '
+    def staleJob: [(.command // empty), (.args // [] | .[] | select(type == "string"))] | any(. as $f | $missing | any(. == $f));
+    def gone($have; $want): $have != null and ($want | length) > 0
+      and ($want | all(. as $p | $have | all(startswith($p) | not)));
+    def staleSvc: ((.containers // []) | length) + ((.systemdUnits // []) | length) > 0
+      and ((.containers // []) | length == 0 or gone($containers; .))
+      and ((.systemdUnits // []) | length == 0 or gone($units; .));
     def isRestic: .kind == "restic" or .id == "restic";
     $tpl[0] as $t
     | .role = "primary"
     | del(.promote)
     | (if .keepalive then .keepalive.defaultEnabled = false else . end)
     | .services = ([$t.services[] | select(.name == "immich")]
-        + [(.services // [])[] | select((mc | not) and .name != "immich")]
+        + [(.services // [])[] | select((staleSvc | not) and .name != "immich")]
         | . as $s | $s + [$t.services[] | select(.name as $n | any($s[]; .name == $n) | not)])
     | .jobs = ((.jobs // []) as $j
-        | [$j[] | select((mc | not) and (isRestic | not) and .id != "immich-db")] as $keep
+        | [$j[] | select((staleJob | not) and (isRestic | not) and .id != "immich-db")] as $keep
         | [$t.jobs[] | select(.id == "immich-db")]
           + $keep
           + (if $resticOk then

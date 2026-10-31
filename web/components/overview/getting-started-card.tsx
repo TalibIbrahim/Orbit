@@ -76,9 +76,9 @@ export function GettingStartedCard({
           cta: "Add device",
         },
         {
-          key: "iphone",
+          key: "phone",
           label:
-            "iPhone: install Tailscale and the Immich app, server URL http://arm-free.<tailnet>.ts.net:2283; keep Tailscale on (background backup needs the tunnel)",
+            "Phones: install Tailscale and the Immich app, server URL http://arm-free.<tailnet>.ts.net:2283; keep Tailscale on (background backup needs the tunnel)",
           done: false,
           href: "/settings?tab=general",
           cta: "Info",

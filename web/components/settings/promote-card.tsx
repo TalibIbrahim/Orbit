@@ -90,7 +90,7 @@ function Done({ s }: { s: PromoteStatus }) {
         </>
       ) : null}
       <p className="text-sm text-muted-foreground">
-        On your iPhone open the Immich app, log out, and set the server URL to the address above (Settings, Server
+        On each phone open the Immich app, log out, and set the server URL to the address above (Settings, Server
         endpoint), then log in again.
       </p>
     </div>

@@ -149,7 +149,7 @@ NOW="$(date +%s)"
 LAG_H=$(( (NOW - DUMP_EPOCH) / 3600 ))
 echo
 log "Step 7/7: standby is ACTIVE"
-echo "  Immich URL : http://${TS_IP}:2283   (point the iPhone app's server URL here)"
+echo "  Immich URL : http://${TS_IP}:2283   (point the Immich apps' server URL here)"
 echo "  Dump used  : ${DUMP}"
 echo "  Dump time  : $(date -d "@${DUMP_EPOCH}" '+%Y-%m-%d %H:%M:%S')  (${LAG_H} h ago)"
 echo

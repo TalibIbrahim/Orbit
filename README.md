@@ -18,7 +18,7 @@ The setting `primaryMode` decides where Immich runs. Choose it when you install 
 **Device mode**
 
 ```
- iPhone (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
+ Phones (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
                                                                       |
  PRIMARY: Windows PC                         STANDBY: "arm-free" (Oracle A1.Flex 2 OCPU / 12 GB)
  +--------------------------+  Syncthing   +------------------------------------------------+
@@ -37,7 +37,7 @@ Single source of truth is the PC. The standby is a replica until you press Promo
 **arm-free mode**
 
 ```
- iPhone (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
+ Phones (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
                                                                       |
  PRIMARY: "arm-free" (Oracle A1.Flex 2 OCPU / 12 GB)            REPLICAS: PC, laptop, extras
  +------------------------------------------------+  Syncthing  +---------------------------+
@@ -59,7 +59,7 @@ Single source of truth is arm-free; every other device is a copy you can restore
 3. [Set up the PC and replicas](#3-set-up-the-pc-and-replicas)
 4. [Tailscale notes](#4-tailscale-notes)
 5. [Immich, Syncthing and restic](#5-immich-syncthing-and-restic)
-6. [iPhone setup](#6-iphone-setup)
+6. [Phone setup](#6-phone-setup)
 7. [Folder storage limits](#7-folder-storage-limits)
 8. [Backups](#8-backups)
 9. [Promote standby, switch back, restore test](#9-promote-standby-switch-back-restore-test) (details in [docs/failover-restore.md](docs/failover-restore.md))
@@ -86,7 +86,7 @@ Pages: Overview, Usage, Folders, Devices (bottom bar); Replication, Backups, Set
 | Promote standby (device mode) | One button (Settings -> Standby) starts Immich on arm-free from the latest dump. Switch-back instructions on the same tab. In arm-free mode this tab shows a disaster-recovery card instead. |
 | Keep-alive | Toggle that runs NeverIdle on arm-free to avoid Oracle idle reclamation (recommended in device mode, optional in arm-free mode). |
 | LAN mode | Device mode: the Immich link picks the LAN URL at home, the Tailscale URL away, or the standby URL after a promote. arm-free mode: it opens the arm-free URL (`ORBIT_IMMICH_URL`). |
-| PWA | Installable on the iPhone home screen, offline page, light/dark theme. |
+| PWA | Installable on any phone home screen (iOS and Android), offline page, light/dark theme. |
 | Auto-updates | Containers via a daily systemd timer; agents self-update from the hub. |
 
 How the hub works: it polls every agent every 60 s and caches the last good response in SQLite, so an offline device shows "offline, last seen X" instead of errors. Alerts go to a Discord webhook and/or SMTP email (Settings -> Alerts):
@@ -213,7 +213,7 @@ Syncthing GUI is loopback-only: `ssh -L 8384:127.0.0.1:8384 ubuntu@arm-free`, th
 Open Overview: the **Getting started** checklist walks through the first steps.
 
 - **Device mode:** add the PC, pair folders, enable keep-alive (marked **Recommended**: a standby mostly idles, see [section 10](#10-keep-alive-and-idle-risk-meter) and Settings -> Standby), set up alerts.
-- **arm-free mode:** open `http://arm-free.<tailnet>.ts.net:2283` in a browser and create the Immich admin account first, then add replicas ([section 3.2](#32-replicas-add-device)), set up the phone ([section 6](#6-iphone-setup)) and alerts. Keep-alive is optional.
+- **arm-free mode:** open `http://arm-free.<tailnet>.ts.net:2283` in a browser and create the Immich admin account first, then add replicas ([section 3.2](#32-replicas-add-device)), set up the phone ([section 6](#6-phone-setup)) and alerts. Keep-alive is optional.
 
 ### 2.7 Migrating an existing device-mode install to arm-free mode
 
@@ -229,7 +229,7 @@ Moves Immich from the PC to arm-free and keeps your photos, albums and users (th
    sudo RESTIC_REPOSITORY=<repo> /opt/orbit-src/deploy/arm-free/scripts/install-arm-free.sh --mode arm-free   # add --no-ml to skip ML
    ```
 
-   The installer backs up `/etc/orbit/agent.json` to `agent.json.bak-<timestamp>` and migrates it in place: deviceId, token, hubUrl and listen are kept; role becomes `primary`; leftover Minecraft services/jobs and the promote block are removed; the 02:30 `immich-db` dump job is added (`prune-dumps` is kept); the restic job is kept only if `/etc/orbit/restic-password` exists and a repository is set. It also adds the iptables rule for port 7420 from Docker bridges, restarts the agent and the hub (which re-reads the role), and starts a **fresh** Immich. Re-running it is safe.
+   The installer backs up `/etc/orbit/agent.json` to `agent.json.bak-<timestamp>` and migrates it in place: deviceId, token, hubUrl and listen are kept; role becomes `primary`; stale leftovers (jobs whose script no longer exists, services whose containers and units are gone) and the promote block are removed; the 02:30 `immich-db` dump job is added (`prune-dumps` is kept); the restic job is kept only if `/etc/orbit/restic-password` exists and a repository is set. It also adds the iptables rule for port 7420 from Docker bridges, restarts the agent and the hub (which re-reads the role), and starts a **fresh** Immich. Re-running it is safe.
 4. **Restore the PC's database on arm-free** (replaces the fresh, empty database):
 
    ```bash
@@ -247,7 +247,7 @@ Moves Immich from the PC to arm-free and keeps your photos, albums and users (th
    The library at `/srv/orbit/immich-library` is already the PC's library (it was the standby replica), so the restored database finds every file. Log in at `http://arm-free.<tailnet>.ts.net:2283` with your existing account and spot-check old and new photos.
 5. **Turn arm-free into the source.** Nothing to do by hand: when the first replica pairs, the hub switches arm-free's `immich-library` and `immich-db-dumps` folders to **Send Only** (and replicas to **Receive Only**). Agents update themselves from the hub within a few minutes of the `git pull`; check Devices for the new agent version first.
 6. **Add the PC back as a Replica.** Devices -> Add device -> Replica, Windows. Choose the folder paths (the PC's existing Syncthing folders keep their current location). Run the command in an elevated PowerShell: it backs up the PC's old `C:\ProgramData\Orbit\agent.json` (role primary) and replaces it, restarts the agent, and the hub pairs it. The PC's folders become Receive Only with versioning. Docker Desktop and `C:\Immich` are no longer needed on the PC; remove them once you are happy (keep `C:\Immich\.env` until then).
-7. **Phones:** Immich app -> server URL `http://arm-free.<tailnet>.ts.net:2283` ([section 6](#6-iphone-setup)).
+7. **Phones:** Immich app -> server URL `http://arm-free.<tailnet>.ts.net:2283` ([section 6](#6-phone-setup)).
 8. **Check:** Devices shows no warnings (a role mismatch or missing replica paths is flagged on the device card); Replication shows each replica as **Receive Only** with **Versioning: staggered**; Backups shows `immich-db` succeeding after 02:30. Then delete the old standby database: `sudo rm -rf /srv/orbit/immich-standby-db`.
 
 If the hub still lists arm-free as Standby after step 3, `docker restart orbit-web`. If a replica folder shows "type unknown" or "No versioning", the Replication page shows the likely reason under the folder.
@@ -392,21 +392,23 @@ sudo RESTIC_REPOSITORY=<repo> RESTIC_PASSWORD_FILE=/etc/orbit/restic-password re
 
 Add more paths (for example your own app backups) to the job `args` if you want them offsite. The default config does not back up the photo library itself offsite.
 
-## 6. iPhone setup
+## 6. Phone setup
+
+Any phone with the Tailscale and Immich apps works (iOS or Android); add as many as you like.
 
 **arm-free mode**
 
-1. Install the **Tailscale** app, sign in to the same tailnet and keep it on (VPN On Demand) so background backup works.
+1. Install the **Tailscale** app, sign in to the same tailnet and keep it on so background backup works (iOS: VPN On Demand; Android: Always-on VPN).
 2. Create the Immich admin account first, in a browser at `http://arm-free.<tailnet>.ts.net:2283`.
 3. Install the **Immich** app with the same server URL (the MagicDNS name; the installer stores it as `ORBIT_IMMICH_URL`). One URL works at home and away, no automatic switching needed.
-4. Enable backup in Immich. Add Orbit to the Home Screen as in step 4 below.
+4. Enable backup in Immich. Add Orbit to the home screen as in step 4 below.
 
 **Device mode**
 
 1. Install the **Tailscale** app and sign in to the same tailnet.
 2. Install the **Immich** app. Server URL: `http://<pc-lan-ip>:2283` (home) first. Then Settings -> Networking -> **Automatic URL switching**: enable it, set your home Wi-Fi **SSID** and the local URL `http://<pc-lan-ip>:2283`, and add the external URL `http://<pc>.<tailnet>.ts.net:2283` (external URLs are tried in order). It needs the Location permission to read the SSID. Give the PC a DHCP reservation so the LAN IP is stable.
-3. Enable backup in Immich. Uploads queue while the PC is off and run when it is reachable (iOS background limits apply: opening the app periodically helps with large backlogs).
-4. Orbit on the Home Screen: open `http://arm-free.<tailnet>.ts.net:3000` in Safari -> Share -> **Add to Home Screen**.
+3. Enable backup in Immich. Uploads queue while the PC is off and run when it is reachable (phone background limits apply, especially on iOS: opening the app periodically helps with large backlogs).
+4. Orbit on the home screen: open `http://arm-free.<tailnet>.ts.net:3000`, then iOS Safari -> Share -> **Add to Home Screen**, or Android Chrome -> menu -> **Add to Home screen** / **Install app**.
 5. LAN mode (device mode): the Orbit "Open Immich" link probes the PC's LAN URL (`/api/server/ping`, 1.5 s). If Orbit is served over `https` the `http://` probe is blocked as mixed content and it falls back to the Tailscale URL. There is a manual override (Auto / LAN / Tailscale) next to the link, saved per browser. Set the LAN and Tailscale URLs on the PC device in Devices.
 6. After a promote the link and the instructions point to the standby URL (`http://arm-free.<tailnet>.ts.net:2283`); change the Immich app's server URL accordingly.
 
