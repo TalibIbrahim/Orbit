@@ -103,6 +103,12 @@ export function KeepaliveCard({ deviceId }: { deviceId: string }) {
             <CheckCircle2 className="size-4" /> Keep-alive is enabled; this VM is protected from idle reclamation.
           </p>
         ) : null}
+        {ka?.supported && !ka.recommended && !ka.enabled ? (
+          <p className="mb-3 text-sm text-muted-foreground">
+            Optional: this VM is not currently at risk of idle reclamation. Enable keep-alive only if the idle check
+            below turns warning.
+          </p>
+        ) : null}
         {loading ? (
           <Skeleton className="h-20 rounded-xl" />
         ) : !ka ? (

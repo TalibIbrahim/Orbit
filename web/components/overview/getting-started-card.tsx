@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiGet } from "@/lib/api";
-import { useAgent } from "@/lib/hooks";
+import { pickHost, useAgent } from "@/lib/hooks";
 import { usePoll } from "@/lib/use-poll";
 
 const KEY = "orbit.onboarding.dismissed";
@@ -19,6 +19,8 @@ interface Step {
   href: string;
   cta: string;
   recommended?: boolean;
+  /** manual step we cannot detect; ignored when deciding if everything is done */
+  manual?: boolean;
 }
 
 export function GettingStartedCard({
@@ -38,15 +40,59 @@ export function GettingStartedCard({
     }
   }, []);
 
+  const settings = usePoll(() => apiGet<HubSettings>("/api/settings"), 0);
+  const armFree = settings.data?.primaryMode === "arm-free";
   const standby = devices?.find((d) => d.role === "standby" && d.enrolled);
   const primary = devices?.find((d) => d.role === "primary" && d.enrolled);
-  const keepalive = useAgent<KeepaliveState>(standby?.id, "/keepalive", 60_000);
-  const settings = usePoll(() => apiGet<HubSettings>("/api/settings"), 0);
+  const keepalive = useAgent<KeepaliveState>(armFree ? undefined : standby?.id, "/keepalive", 60_000);
 
   if (dismissed || !devices || !settings.data) return null;
 
   const s = settings.data;
-  const steps: Step[] = [
+  const alertsDone = !!s.discordWebhookUrl || !!s.email?.enabled;
+  const host = pickHost(devices, "arm-free");
+  const steps: Step[] = armFree
+    ? [
+        {
+          key: "install",
+          label: "Install arm-free with --mode arm-free (Immich starts automatically)",
+          done: !!host && host.enrolled,
+          href: "/devices/add",
+          cta: "How",
+        },
+        {
+          key: "immich",
+          label: "Open Immich at http://arm-free.<tailnet>.ts.net:2283 and create the admin account",
+          done: !!host?.online,
+          href: "/devices",
+          cta: "Devices",
+          manual: true,
+        },
+        {
+          key: "replicas",
+          label: "Add replicas (PC, laptop) from Devices > Add device",
+          done: !!devices.some((d) => d.role === "replica" && d.enrolled),
+          href: "/devices/add",
+          cta: "Add device",
+        },
+        {
+          key: "iphone",
+          label:
+            "iPhone: install Tailscale and the Immich app, server URL http://arm-free.<tailnet>.ts.net:2283; keep Tailscale on (background backup needs the tunnel)",
+          done: false,
+          href: "/settings?tab=general",
+          cta: "Info",
+          manual: true,
+        },
+        {
+          key: "alerts",
+          label: "Optional: configure alerts (Discord or email)",
+          done: alertsDone,
+          href: "/settings",
+          cta: "Configure",
+        },
+      ]
+    : [
     { key: "standby", label: "Standby VM connected", done: !!standby, href: "/devices", cta: "Add device" },
     { key: "primary", label: "Primary PC added", done: !!primary, href: "/devices", cta: "Add device" },
     {
@@ -60,7 +106,7 @@ export function GettingStartedCard({
     {
       key: "alerts",
       label: "Alerts configured",
-      done: !!s.discordWebhookUrl || !!s.email?.enabled,
+      done: alertsDone,
       href: "/settings",
       cta: "Configure",
     },
@@ -72,7 +118,7 @@ export function GettingStartedCard({
       cta: "View",
     },
   ];
-  if (steps.every((x) => x.done)) return null;
+  if (steps.every((x) => x.done || x.manual)) return null;
 
   function dismiss() {
     setDismissed(true);

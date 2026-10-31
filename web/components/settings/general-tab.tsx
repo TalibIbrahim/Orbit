@@ -1,10 +1,13 @@
 "use client";
 
-import { Smartphone } from "lucide-react";
+import type { PrimaryMode } from "@orbit/shared";
+import { Smartphone, TriangleAlert } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SaveBar } from "./save-bar";
 import type { SettingsApi } from "./use-settings";
@@ -45,6 +48,59 @@ export function GeneralTab({ api }: { api: SettingsApi }) {
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">App version</span>
             <Badge variant="secondary">{APP_VERSION}</Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Primary mode</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Select value={draft.primaryMode} onValueChange={(v) => setDraft({ ...draft, primaryMode: v as PrimaryMode })}>
+            <SelectTrigger className="w-full" aria-label="Primary mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="device">Device primary</SelectItem>
+              <SelectItem value="arm-free">arm-free primary</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {draft.primaryMode === "arm-free"
+              ? "Immich runs on arm-free; other devices are replicas."
+              : "Immich runs on a home PC; arm-free is a standby."}
+          </p>
+          <Alert>
+            <TriangleAlert className="text-warning" />
+            <AlertTitle>Changing this does not move anything</AlertTitle>
+            <AlertDescription>
+              It does not move data or reconfigure Immich or Syncthing. The mode is normally chosen at install time
+              (<code className="font-mono">install-arm-free.sh --mode arm-free</code>).
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Replica versioning</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-1.5">
+            <Label htmlFor="ver-days">Keep old versions for N days</Label>
+            <Input
+              id="ver-days"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={3650}
+              value={draft.versioningMaxAgeDays ?? 30}
+              onChange={(e) => setDraft({ ...draft, versioningMaxAgeDays: Number(e.target.value) })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Applies to staggered versioning on replicas when they are (re)paired. Allowed range: 1 to 3650 days.
+            </p>
           </div>
         </CardContent>
       </Card>

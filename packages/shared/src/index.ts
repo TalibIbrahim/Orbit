@@ -23,6 +23,13 @@ export const ORACLE_LIMITS = {
 
 // ───────────────────────────── Devices ─────────────────────────────
 export type DeviceRole = "primary" | "standby" | "replica";
+/**
+ * Where Immich (the primary) runs.
+ *  - "device":   Immich on a home PC (role primary); arm-free is a standby replica that can be promoted.
+ *  - "arm-free": Immich runs permanently on arm-free (role primary); every other device is a Receive Only replica.
+ */
+export type PrimaryMode = "device" | "arm-free";
+export const PRIMARY_MODES: PrimaryMode[] = ["device", "arm-free"];
 export type Platform = "windows" | "linux" | "darwin";
 
 export interface AgentHealth {
@@ -273,7 +280,7 @@ export interface SyncthingPairRequest {
   folders: {
     id: string;
     label: string;
-    path: string; // local path (created if missing) — ignored when the folder already exists locally
+    path: string; // local path (created if missing) — ignored when the folder already exists locally; "" = must already exist
     type: SyncthingFolderType;
     versioning?: { type: "simple" | "staggered" | "trashcan"; params: Record<string, string> };
   }[];
@@ -401,6 +408,8 @@ export interface DeviceRecord {
   syncthingDeviceId: string | null;
   immichLanUrl: string | null; // e.g. http://192.168.1.20:2283 (primary)
   immichTailscaleUrl: string | null; // e.g. http://pc.tailnet.ts.net:2283
+  /** Replica only: shared folder id -> local path chosen in Add device (any drive). Missing = platform default. */
+  replicaPaths: Record<string, string>;
 }
 
 export interface DeviceSummary extends DeviceRecord {
@@ -410,9 +419,9 @@ export interface DeviceSummary extends DeviceRecord {
 }
 
 // GET    /api/devices                                   -> DeviceSummary[]
-// POST   /api/devices      { name, role, platform }     -> AddDeviceResponse
+// POST   /api/devices      { name, role, platform, replicaPaths? } -> AddDeviceResponse
 // GET    /api/devices/:id                               -> DeviceSummary
-// PATCH  /api/devices/:id  Partial<Pick<DeviceRecord,"name"|"role"|"agentUrl"|"immichLanUrl"|"immichTailscaleUrl">> -> DeviceRecord
+// PATCH  /api/devices/:id  Partial<Pick<DeviceRecord,"name"|"role"|"agentUrl"|"immichLanUrl"|"immichTailscaleUrl"|"replicaPaths">> -> DeviceRecord
 // DELETE /api/devices/:id                               -> { ok: true }
 // ANY    /api/devices/:id/agent/<agent path without /v1> -> GET: Cached<T>; other methods: T (proxied, 503 ApiError if offline)
 //        e.g. GET /api/devices/arm-free/agent/metrics?range=24h -> Cached<MetricsResponse>
@@ -486,7 +495,8 @@ export type AlertKind =
   | "folder-limit"
   | "device-offline"
   | "update-available"
-  | "backup-failed";
+  | "backup-failed"
+  | "library-near-limit"; // arm-free mode: the volume holding immich-library is nearly full
 
 export interface AlertEvent {
   key: string; // dedupe key, e.g. "disk-high:arm-free:/"
@@ -507,6 +517,8 @@ export interface AlertsResponse {
 }
 
 export interface HubSettings {
+  primaryMode: PrimaryMode; // default "device"; installer sets ORBIT_PRIMARY_MODE, editable in Settings
+  versioningMaxAgeDays: number; // staggered versioning maxAge on replicas (default 30)
   hubUrl: string; // URL agents/install scripts use, e.g. http://arm-free.tailnet.ts.net:3000
   discordWebhookUrl: string | null;
   email: {
@@ -524,8 +536,11 @@ export interface HubSettings {
     primaryOfflineDays: number; // 3
     diskPercent: number; // 80
     ramPercent: number; // 90
+    libraryPercent: number; // 90 - arm-free mode: volume holding immich-library
   };
-  sharedFolders: { id: string; label: string; replicaPath: string; versioning: "simple" | "staggered" | "trashcan" }[]; // what new replicas get
+  sharedFolders: { id: string; label: string; replicaPath: string; versioning: "simple" | "staggered" | "trashcan" }[];
+  // ^ what new replicas get. replicaPath = the folder's path on arm-free: the standby copy in device mode,
+  //   the Send Only source in arm-free mode. Other replicas use DeviceRecord.replicaPaths / defaultReplicaPath.
   tailscaleAuthKey: string | null; // optional, baked into install scripts (masked on GET)
 }
 
@@ -535,8 +550,14 @@ export interface ImmichLinks {
   standbyUrl: string | null; // set after promote
   primaryOnline: boolean;
   promoted: boolean;
+  primaryMode: PrimaryMode;
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
 export const GB = 1024 ** 3;
 export const TB = 1024 ** 4;
+
+/** Default replica folder path for a shared folder on a given platform. */
+export function defaultReplicaPath(folderId: string, platform: Platform | null): string {
+  return platform === "windows" ? `C:\\OrbitReplicas\\${folderId}` : `/srv/orbit/replicas/${folderId}`;
+}

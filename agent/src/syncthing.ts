@@ -193,6 +193,8 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
           if (f.versioning) body.versioning = versioningBody(f.versioning);
           await st(`/rest/config/folders/${id}`, { method: "PATCH", body });
         } else {
+          // path "" means "use the existing folder"; it cannot create a new one.
+          if (!f.path) throw new Error(`folder "${f.id}" does not exist on this device and no path was given`);
           mkdirSync(f.path, { recursive: true });
           await st(`/rest/config/folders/${id}`, {
             method: "PUT",
@@ -226,7 +228,7 @@ function validatePair(b: unknown): SyncthingPairRequest {
   if (r.remoteAddress !== undefined && typeof r.remoteAddress !== "string") throw bad("remoteAddress");
   if (!Array.isArray(r.folders)) throw bad("folders");
   for (const f of r.folders) {
-    if (!f || typeof f.id !== "string" || !f.id || typeof f.label !== "string" || typeof f.path !== "string" || !f.path) throw bad("folder id/label/path");
+    if (!f || typeof f.id !== "string" || !f.id || typeof f.label !== "string" || typeof f.path !== "string") throw bad("folder id/label/path");
     if (!FOLDER_TYPES.includes(f.type)) throw bad("folder type");
     if (f.versioning !== undefined) {
       const v = f.versioning;

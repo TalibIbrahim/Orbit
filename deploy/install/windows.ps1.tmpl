@@ -54,7 +54,7 @@ param([string]$Bundle = "C:\Program Files\Orbit\orbit-agent.mjs", [string]$Confi
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $log = Join-Path $LogDir "agent.log"
 function Write-Log([string]$m) { Add-Content -Path $log -Value ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m) -Encoding UTF8 }
-$env:Path = "$env:ProgramFiles\nodejs;$env:ProgramFiles\Docker\Docker\resources\bin;$env:Path"
+$env:Path = "$env:ProgramFiles\nodejs;$env:Path"
 $env:ORBIT_AGENT_CONFIG = $Config
 $node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
 if (-not $node) { Write-Log "node.exe not found"; exit 1 }

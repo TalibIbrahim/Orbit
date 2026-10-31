@@ -94,6 +94,24 @@ export function ImmichLink({ className }: { className?: string }) {
     via = "tailscale";
   }
 
+  if (links.primaryMode === "arm-free") {
+    const u = links.tailscaleUrl;
+    return (
+      <div className={`flex flex-wrap items-center gap-2 ${className ?? ""}`}>
+        {u ? (
+          <Button asChild>
+            <a href={u} target="_blank" rel="noopener noreferrer">
+              Open Immich <ExternalLink />
+            </a>
+          </Button>
+        ) : (
+          <Button disabled>Immich not configured</Button>
+        )}
+        <span className="text-xs text-muted-foreground">via Tailscale</span>
+      </div>
+    );
+  }
+
   const caption = via === "lan" ? "via LAN" : via === "standby" ? "standby" : "via Tailscale";
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className ?? ""}`}>

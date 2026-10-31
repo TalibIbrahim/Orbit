@@ -28,6 +28,9 @@ services:
       # The hub registers arm-free's own agent from its config (token, role) on startup.
       ORBIT_LOCAL_AGENT_CONFIG: /run/orbit/agent.json
       ORBIT_LOCAL_AGENT_URL: "http://${TAILSCALE_IP:-127.0.0.1}:7420"
+      # "device" (Immich primary on a PC, arm-free = standby) or "arm-free" (Immich runs here).
+      ORBIT_PRIMARY_MODE: "${ORBIT_PRIMARY_MODE:-device}"
+      ORBIT_IMMICH_URL: "${ORBIT_IMMICH_URL:-}"
     volumes:
       # Hub database/settings. Must be writable by uid 1000 (install script chowns it).
       - /srv/orbit/orbit-data:/data

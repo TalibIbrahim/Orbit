@@ -2,6 +2,7 @@ import { cachedGet, errMsg } from "./agents";
 import { evaluateAlerts } from "./alerts";
 import { type DeviceRow, listDevices } from "./db";
 import { needsPairing, pairWithPrimary, registerLocalAgent } from "./devices";
+import { getSettings } from "./settings";
 import { updateReplicaSync } from "./replication";
 
 const g = globalThis as unknown as { __orbitPoller?: boolean };
@@ -16,6 +17,8 @@ async function pollDevice(d: DeviceRow, slow: boolean): Promise<void> {
   if (!slow) return;
   const paths = ["/syncthing", "/folders", "/backups", "/keepalive"];
   if (d.role === "standby") paths.push("/idle-risk", "/storage", "/promote");
+  // arm-free mode: the primary is the Oracle VM (idle risk) and holds the library (storage alerts).
+  else if (d.role === "primary" && getSettings().primaryMode === "arm-free") paths.push("/idle-risk", "/storage");
   await Promise.all(paths.map((p) => cachedGet(d, p)));
 }
 

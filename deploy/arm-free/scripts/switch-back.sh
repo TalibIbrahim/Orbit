@@ -26,6 +26,11 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
 
+# Not applicable when Immich runs here permanently (arm-free primary mode).
+if [ "$(env_file_get "${ARM_FREE_DIR}/.env" ORBIT_PRIMARY_MODE)" = "arm-free" ]; then
+  die "ORBIT_PRIMARY_MODE=arm-free: this VM is the primary, there is nothing to promote or switch back. See docs/failover-restore.md, section 'Disaster recovery (arm-free primary)'."
+fi
+
 YES=0
 SKIP_EXPORT=0
 for a in "$@"; do
@@ -41,7 +46,7 @@ need docker curl jq sed find rsync
 ST_URL="${SYNCTHING_URL:-http://127.0.0.1:8384}"
 ST_CONFIG="${SYNCTHING_CONFIG:-${ORBIT_ROOT}/syncthing-config/config.xml}"
 FOLDERS="${PROMOTE_FOLDERS:-immich-library immich-db-dumps}"
-ENV_FILE="${ARM_FREE_DIR}/immich-standby/.env"
+ENV_FILE="${ARM_FREE_DIR}/immich/.env"
 STATE_FILE="${ORBIT_STATE_DIR}/promoted-at"
 UPLOAD_LOCATION="$(env_file_get "$ENV_FILE" UPLOAD_LOCATION)"
 UPLOAD_LOCATION="${UPLOAD_LOCATION:-${ORBIT_ROOT}/immich-library}"

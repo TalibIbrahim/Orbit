@@ -38,6 +38,9 @@ function open(): DatabaseSync {
     );
     CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
   `);
+  // Migrations for databases created by older versions.
+  const cols = (db.prepare("PRAGMA table_info(devices)").all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("replica_paths")) db.exec("ALTER TABLE devices ADD COLUMN replica_paths TEXT");
   return db;
 }
 
@@ -46,6 +49,16 @@ export function db(): DatabaseSync {
 }
 
 type Row = Record<string, unknown>;
+
+function parsePaths(v: unknown): Record<string, string> {
+  if (typeof v !== "string" || !v) return {};
+  try {
+    const o = JSON.parse(v) as unknown;
+    return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
 
 function toDevice(r: Row): DeviceRow {
   return {
@@ -60,6 +73,7 @@ function toDevice(r: Row): DeviceRow {
     syncthingDeviceId: (r.syncthing_device_id as string) ?? null,
     immichLanUrl: (r.immich_lan_url as string) ?? null,
     immichTailscaleUrl: (r.immich_tailscale_url as string) ?? null,
+    replicaPaths: parsePaths(r.replica_paths),
     token: r.token as string,
     pendingPair: !!r.pending_pair,
     agentVersion: (r.agent_version as string) ?? null,
@@ -88,7 +102,7 @@ export const primaryDevice = (): DeviceRow | null => listDevices().find((d) => d
 const COLS: Record<string, string> = {
   name: "name", role: "role", platform: "platform", agentUrl: "agent_url", enrolled: "enrolled",
   lastSeen: "last_seen", syncthingDeviceId: "syncthing_device_id", immichLanUrl: "immich_lan_url",
-  immichTailscaleUrl: "immich_tailscale_url", token: "token", pendingPair: "pending_pair", agentVersion: "agent_version",
+  immichTailscaleUrl: "immich_tailscale_url", token: "token", replicaPaths: "replica_paths", pendingPair: "pending_pair", agentVersion: "agent_version",
 };
 
 export function insertDevice(d: Pick<DeviceRow, "id" | "name" | "role" | "token"> & Partial<DeviceRow>): DeviceRow {
@@ -103,7 +117,7 @@ export function updateDevice(id: string, patch: Partial<DeviceRow>): DeviceRow |
     const col = COLS[k];
     if (!col || v === undefined) continue;
     sets.push(`${col} = ?`);
-    vals.push(typeof v === "boolean" ? (v ? 1 : 0) : (v as string | number | null));
+    vals.push(typeof v === "boolean" ? (v ? 1 : 0) : v !== null && typeof v === "object" ? JSON.stringify(v) : (v as string | number | null));
   }
   if (sets.length) db().prepare(`UPDATE devices SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
   return getDevice(id);

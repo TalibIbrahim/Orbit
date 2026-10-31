@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import type { PrimaryMode } from "@orbit/shared";
 import { formatPercent } from "@/lib/format";
 
 function Meter({ m }: { m: IdleMetric }) {
@@ -59,7 +60,8 @@ export function IdleVerdictPill({ risk }: { risk: IdleRisk }) {
   );
 }
 
-export function IdleRiskCard({ risk }: { risk: IdleRisk }) {
+export function IdleRiskCard({ risk, mode }: { risk: IdleRisk; mode?: PrimaryMode | null }) {
+  const armFree = mode === "arm-free";
   const days = (risk.coverage * risk.windowDays).toFixed(1);
   return (
     <Card>
@@ -75,7 +77,7 @@ export function IdleRiskCard({ risk }: { risk: IdleRisk }) {
             <TriangleAlert />
             <AlertTitle>At risk</AlertTitle>
             <AlertDescription className="text-danger/90">
-              All metrics below 20% over 7 days — Oracle may reclaim this VM. Turn on keep-alive in Settings.
+              All metrics below 20% over 7 days — Oracle may reclaim this VM. {armFree ? "Immich normally prevents this; consider the optional keep-alive in Settings." : "Turn on keep-alive in Settings."}
             </AlertDescription>
           </Alert>
         ) : (
@@ -83,7 +85,9 @@ export function IdleRiskCard({ risk }: { risk: IdleRisk }) {
             <CheckCircle2 />
             <AlertTitle>Safe</AlertTitle>
             <AlertDescription className="text-success/90">
-              Safe: at least one metric is above Oracle&apos;s idle threshold.
+              {armFree
+                ? "Safe: Immich keeps arm-free above Oracle's idle threshold."
+                : "Safe: at least one metric is above Oracle's idle threshold."}
             </AlertDescription>
           </Alert>
         )}
@@ -92,7 +96,7 @@ export function IdleRiskCard({ risk }: { risk: IdleRisk }) {
         ))}
         {risk.atRisk || risk.coverage < 0.5 ? (
           <Link href="/settings?tab=standby" className="text-sm font-medium text-primary underline underline-offset-2">
-            Set up keep-alive on the standby
+            {armFree ? "Optionally enable keep-alive on arm-free" : "Set up keep-alive on the standby"}
           </Link>
         ) : null}
         <p className="text-xs text-muted-foreground">

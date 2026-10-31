@@ -1,6 +1,6 @@
 import type { DeviceRecord, DeviceRole } from "@orbit/shared";
 import { deleteDevice, getDevice, toRecord, updateDevice } from "@/lib/server/db";
-import { summarize } from "@/lib/server/devices";
+import { cleanReplicaPaths, summarize } from "@/lib/server/devices";
 import { fail, guard, json, readJson } from "@/lib/server/http";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export const PATCH = (req: Request, { params }: Ctx) =>
   guard(async () => {
     const { id } = await params;
     if (!getDevice(id)) return fail(404, "unknown device");
-    const b = await readJson<Partial<Pick<DeviceRecord, "name" | "role" | "agentUrl" | "immichLanUrl" | "immichTailscaleUrl">>>(req);
+    const b = await readJson<Partial<Pick<DeviceRecord, "name" | "role" | "agentUrl" | "immichLanUrl" | "immichTailscaleUrl" | "replicaPaths">>>(req);
     const patch: Parameters<typeof updateDevice>[1] = {};
     if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim().slice(0, 60);
     if (b.role !== undefined) {
@@ -28,6 +28,13 @@ export const PATCH = (req: Request, { params }: Ctx) =>
       if (v === undefined) continue;
       if (v !== null && !/^https?:\/\/[^\s']+$/.test(v)) return fail(400, `invalid ${k}`);
       patch[k] = v ? v.replace(/\/+$/, "") : null;
+    }
+    if (b.replicaPaths !== undefined) {
+      try {
+        patch.replicaPaths = cleanReplicaPaths(b.replicaPaths);
+      } catch (e) {
+        return fail(400, (e as Error).message);
+      }
     }
     return json(toRecord(updateDevice(id, patch)!));
   });

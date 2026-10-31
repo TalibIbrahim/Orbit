@@ -1,6 +1,6 @@
 "use client";
 
-import type { Cached, DeviceRole, DeviceSummary } from "@orbit/shared";
+import type { Cached, DeviceRole, DeviceSummary, HubSettings, PrimaryMode } from "@orbit/shared";
 import { agentGet, apiGet } from "@/lib/api";
 import { usePoll } from "@/lib/use-poll";
 
@@ -21,4 +21,15 @@ export function useAgent<T>(deviceId: string | undefined, agentPath: string, int
     intervalMs,
     [deviceId, agentPath],
   );
+}
+
+/** The hub's primary mode (null until loaded). */
+export function usePrimaryMode(): { mode: PrimaryMode | null; loading: boolean } {
+  const { data, loading } = usePoll(() => apiGet<HubSettings>("/api/settings"), 5 * 60_000);
+  return { mode: data?.primaryMode ?? null, loading };
+}
+
+/** The Oracle / arm-free device: standby in device mode, primary in arm-free mode. */
+export function pickHost(devices: DeviceSummary[] | undefined, mode: PrimaryMode | null): DeviceSummary | undefined {
+  return pickRole(devices, mode === "arm-free" ? "primary" : "standby");
 }

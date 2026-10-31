@@ -2,7 +2,7 @@
 # update.sh - pull newer images and recreate changed services (run daily by orbit-update.timer).
 #
 #  * main stack: docker compose pull (skips buildable orbit-web), up -d
-#  * immich-standby: only if its containers are currently running (promoted)
+#  * immich: arm-free mode always; device mode only if its containers are running (promoted)
 #  * reports changed images to $DISCORD_WEBHOOK_URL (if set) and the journal/log
 #  * optional: ORBIT_AUTO_BUILD=1 rebuilds orbit-web from the checked-out repo
 #
@@ -53,11 +53,14 @@ update_stack() {
 
 update_stack main "$MAIN_COMPOSE"
 
-if [ -f "$IMMICH_COMPOSE" ] \
+# arm-free mode: Immich is the primary and is always updated. device mode: only while promoted.
+if [ "$(env_file_get "${ARM_FREE_DIR}/.env" ORBIT_PRIMARY_MODE)" = "arm-free" ] && [ -f "$IMMICH_COMPOSE" ]; then
+  update_stack immich "$IMMICH_COMPOSE"
+elif [ -f "$IMMICH_COMPOSE" ] \
    && [ -n "$(docker compose -f "$IMMICH_COMPOSE" --project-directory "$(dirname "$IMMICH_COMPOSE")" ps -q 2>/dev/null || true)" ]; then
-  update_stack immich-standby "$IMMICH_COMPOSE"
+  update_stack immich "$IMMICH_COMPOSE"
 else
-  log "[immich-standby] not running, skipped"
+  log "[immich] standby not running, skipped"
 fi
 
 docker image prune -f >/dev/null || true

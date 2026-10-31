@@ -21,6 +21,11 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
 
+# Not applicable when Immich runs here permanently (arm-free primary mode).
+if [ "$(env_file_get "${ARM_FREE_DIR}/.env" ORBIT_PRIMARY_MODE)" = "arm-free" ]; then
+  die "ORBIT_PRIMARY_MODE=arm-free: this VM is the primary, there is nothing to promote or switch back. See docs/failover-restore.md, section 'Disaster recovery (arm-free primary)'."
+fi
+
 FORCE=0
 for a in "$@"; do
   case "$a" in
@@ -37,7 +42,20 @@ DUMP_DIR="${ORBIT_DUMP_DIR:-${ORBIT_ROOT}/immich-db-dumps}"
 ST_URL="${SYNCTHING_URL:-http://127.0.0.1:8384}"
 ST_CONFIG="${SYNCTHING_CONFIG:-${ORBIT_ROOT}/syncthing-config/config.xml}"
 FOLDERS="${PROMOTE_FOLDERS:-immich-library immich-db-dumps}"
-ENV_FILE="${ARM_FREE_DIR}/immich-standby/.env"
+ENV_FILE="${ARM_FREE_DIR}/immich/.env"
+# Installs from before the immich-standby -> immich rename have no config file yet; without it
+# Docker would bind-mount an empty directory. Standby: ML off, job concurrency 1.
+IMMICH_CFG="${ARM_FREE_DIR}/immich/immich-config.json"
+if [ ! -f "$IMMICH_CFG" ]; then
+  jq '.machineLearning.enabled=false' "${ARM_FREE_DIR}/immich/immich-config.example.json" > "${IMMICH_CFG}.tmp"
+  mv "${IMMICH_CFG}.tmp" "$IMMICH_CFG"
+  log "created ${IMMICH_CFG} (ML disabled)"
+fi
+if [ ! -f "$ENV_FILE" ] && [ -f "${ARM_FREE_DIR}/immich-standby/.env" ]; then
+  cp "${ARM_FREE_DIR}/immich-standby/.env" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  log "migrated immich-standby/.env -> immich/.env"
+fi
 STATE_FILE="${ORBIT_STATE_DIR}/promoted-at"
 
 [ -f "$IMMICH_COMPOSE" ] || die "missing $IMMICH_COMPOSE"

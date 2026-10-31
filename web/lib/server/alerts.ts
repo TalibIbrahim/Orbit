@@ -1,6 +1,8 @@
 import type {
-  AgentStatus, AlertEvent, AlertKind, AlertsResponse, BackupsResponse, FolderLimitsResponse, IdleRisk,
+  AgentStatus, AlertEvent, AlertKind, AlertsResponse, BackupsResponse, DiskInfo, FolderLimitsResponse, IdleRisk,
+  StorageBreakdown, SyncthingSummary,
 } from "@orbit/shared";
+import { GB } from "@orbit/shared";
 import { cachedOnly } from "./agents";
 import { bundleInfo } from "./bundle";
 import { db, listDevices, toAlert } from "./db";
@@ -20,6 +22,7 @@ function collect(now: number): Cond[] {
   const add = (kind: AlertKind, severity: Cond["severity"], deviceId: string | null, suffix: string, title: string, message: string) =>
     out.push({ key: `${kind}:${deviceId ?? "-"}${suffix ? `:${suffix}` : ""}`, kind, severity, deviceId, title, message });
 
+  const armFree = s.primaryMode === "arm-free";
   const devices = listDevices();
   const bundle = bundleInfo();
   const ago = (ms: number) => (ms >= DAY ? `${(ms / DAY).toFixed(1)} days` : `${(ms / H).toFixed(1)} hours`);
@@ -29,7 +32,7 @@ function collect(now: number): Cond[] {
     const offlineMs = d.lastSeen != null ? now - d.lastSeen : null;
     if (d.role === "primary") {
       if (offlineMs != null && offlineMs > t.primaryOfflineDays * DAY)
-        add("primary-offline", "critical", d.id, "", `Primary offline: ${d.name}`, `${d.name} has not been seen for ${ago(offlineMs)}. Consider promoting the standby.`);
+        add("primary-offline", "critical", d.id, "", `Primary offline: ${d.name}`, `${d.name} has not been seen for ${ago(offlineMs)}. ${armFree ? "Immich is down for everyone; see docs/failover-restore.md (disaster recovery) if the VM is gone." : "Consider promoting the standby."}`);
     } else if (offlineMs != null && offlineMs > H) {
       add("device-offline", "warning", d.id, "", `Device offline: ${d.name}`, `${d.name} has not been seen for ${ago(offlineMs)}.`);
     }
@@ -52,11 +55,13 @@ function collect(now: number): Cond[] {
     if (st?.health.agentVersion && bundle && st.health.agentVersion !== bundle.version)
       add("update-available", "info", d.id, "", `Agent update for ${d.name}`, `Agent ${st.health.agentVersion} -> ${bundle.version}.`);
 
-    if (d.role === "standby") {
+    if (d.role === "standby" || (armFree && d.role === "primary")) {
       const idle = cachedOnly<IdleRisk>(d.id, "/idle-risk");
       if (idle?.atRisk && idle.coverage >= 0.5)
         add("idle-risk", "critical", d.id, "", `Oracle idle reclamation risk on ${d.name}`, idle.metrics.map((m) => `${m.label}: ${m.value.toFixed(1)}% (< ${m.threshold}%)`).join("\n"));
     }
+
+    if (armFree && d.role === "primary" && st && online) libraryAlert(d.id, d.name, st, t.libraryPercent, add);
 
     for (const f of cachedOnly<FolderLimitsResponse>(d.id, "/folders")?.folders ?? []) {
       if (f.state === "warning" || f.state === "full" || f.state === "paused")
@@ -75,6 +80,46 @@ function collect(now: number): Cond[] {
     }
   }
   return out;
+}
+
+const LIBRARY_FOLDER = "immich-library";
+
+/** Disk whose mount is the longest prefix of `path` (falls back to the primary disk). */
+function diskFor(path: string, st: AgentStatus): DiskInfo | null {
+  let best: DiskInfo | null = null;
+  for (const d of st.disks) {
+    const m = d.mount.replace(/\/+$/, "") || "/";
+    if ((m === "/" || path === m || path.startsWith(`${m}/`)) && (!best || m.length > best.mount.length)) best = d;
+  }
+  return best ?? st.primaryDisk;
+}
+
+/** arm-free mode: warn before the volume holding the Immich library fills up (uploads would start failing). */
+function libraryAlert(
+  deviceId: string, name: string, st: AgentStatus, threshold: number,
+  add: (kind: AlertKind, severity: Cond["severity"], deviceId: string | null, suffix: string, title: string, message: string) => void,
+): void {
+  const folder = cachedOnly<SyncthingSummary>(deviceId, "/syncthing")?.folders.find((f) => f.id === LIBRARY_FOLDER);
+  const path = folder?.path || "/srv/orbit/immich-library";
+  const disk = diskFor(path, st);
+  if (!disk?.total) return;
+  const storage = cachedOnly<StorageBreakdown>(deviceId, "/storage");
+  const quota = storage?.quotaBytes ?? null;
+  const pct = (disk.used / disk.total) * 100;
+  const quotaPct = quota ? (storage!.usedBytes / quota) * 100 : 0;
+  const days = storage?.daysUntilFull ?? null;
+  const soon = days != null && days <= 14;
+  if (pct < threshold && quotaPct < threshold && !soon) return;
+  const photos = storage?.categories.find((c) => c.category === "photos")?.bytes ?? folder?.localBytes ?? null;
+  const lines = [
+    `Volume ${disk.mount}: ${pct.toFixed(1)}% used, ${((disk.total - disk.used) / GB).toFixed(1)} GB free.`,
+    photos != null ? `Immich library: ${(photos / GB).toFixed(1)} GB.` : "",
+    quota ? `Oracle quota: ${quotaPct.toFixed(1)}% of ${(quota / GB).toFixed(0)} GB.` : "",
+    days != null ? `At the current growth rate it is full in about ${Math.round(days)} days.` : "",
+    "Grow the block volume, free space, or move older media off arm-free.",
+  ].filter(Boolean);
+  const critical = pct >= 95 || quotaPct >= 95 || (days != null && days <= 3);
+  add("library-near-limit", critical ? "critical" : "warning", deviceId, "", `Immich library volume nearly full on ${name}`, lines.join("\n"));
 }
 
 const NO_NOTIFY: AlertKind[] = ["update-available"];

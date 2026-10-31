@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiSend } from "@/lib/api";
+import { usePrimaryMode } from "@/lib/hooks";
 
 function EditForm({ device, onDone, onCancel }: { device: DeviceSummary; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState(device.name);
@@ -16,6 +17,7 @@ function EditForm({ device, onDone, onCancel }: { device: DeviceSummary; onDone:
   const [lan, setLan] = useState(device.immichLanUrl ?? "");
   const [ts, setTs] = useState(device.immichTailscaleUrl ?? "");
   const [busy, setBusy] = useState(false);
+  const { mode } = usePrimaryMode();
 
   async function save() {
     setBusy(true);
@@ -55,7 +57,7 @@ function EditForm({ device, onDone, onCancel }: { device: DeviceSummary; onDone:
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="primary">Primary</SelectItem>
-            <SelectItem value="standby">Standby</SelectItem>
+            {mode !== "arm-free" || device.role === "standby" ? <SelectItem value="standby">Standby</SelectItem> : null}
             <SelectItem value="replica">Replica</SelectItem>
           </SelectContent>
         </Select>

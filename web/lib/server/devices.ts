@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type {
-  AgentStatus, DeviceRole, DeviceSummary, Platform, SyncthingPairRequest, SyncthingSummary,
+import {
+  type AgentStatus, defaultReplicaPath, type DeviceRole, type DeviceSummary, type Platform, type SyncthingPairRequest,
+  type SyncthingSummary,
 } from "@orbit/shared";
 import { agentSend, cachedGet, cachedOnly, errMsg } from "./agents";
 import { type DeviceRow, getCache, getDevice, insertDevice, primaryDevice, toRecord, updateDevice } from "./db";
@@ -52,12 +53,16 @@ export async function pairWithPrimary(dev: DeviceRow): Promise<string | null> {
     const [primaryStId, devStId] = await Promise.all([syncthingIdOf(primary), syncthingIdOf(dev)]);
     if (!primaryStId) throw new Error("primary Syncthing device id unknown");
     if (!devStId) throw new Error("device Syncthing device id unknown");
-    const folders = getSettings().sharedFolders;
+    const settings = getSettings();
+    const folders = settings.sharedFolders;
+    const armFree = settings.primaryMode === "arm-free";
 
+    // Device mode: the PC's folders already exist (install-pc.ps1), so path "" = keep the existing one.
+    // arm-free mode: the folders live on arm-free at the shared-folder path and are created on first pairing.
     const onPrimary: SyncthingPairRequest = {
       remoteDeviceId: devStId,
       remoteName: dev.name,
-      folders: folders.map((f) => ({ id: f.id, label: f.label, path: "", type: "sendonly" })),
+      folders: folders.map((f) => ({ id: f.id, label: f.label, path: armFree ? f.replicaPath : "", type: "sendonly" })),
     };
     await agentSend(primary, "POST", "/syncthing/pair", onPrimary);
 
@@ -67,12 +72,9 @@ export async function pairWithPrimary(dev: DeviceRow): Promise<string | null> {
       folders: folders.map((f) => ({
         id: f.id,
         label: f.label,
-        path:
-          dev.role === "standby" ? f.replicaPath
-          : dev.platform === "windows" ? `C:\\OrbitReplicas\\${f.id}`
-          : `/srv/orbit/replicas/${f.id}`,
+        path: dev.role === "standby" ? f.replicaPath : dev.replicaPaths[f.id] || defaultReplicaPath(f.id, dev.platform),
         type: "receiveonly",
-        versioning: versioningOf(f.versioning),
+        versioning: versioningOf(f.versioning, settings.versioningMaxAgeDays),
       })),
     };
     await agentSend(dev, "POST", "/syncthing/pair", onDevice);
@@ -84,8 +86,26 @@ export async function pairWithPrimary(dev: DeviceRow): Promise<string | null> {
   }
 }
 
-const versioningOf = (v: "simple" | "staggered" | "trashcan"): { type: typeof v; params: Record<string, string> } =>
-  v === "staggered" ? { type: v, params: { maxAge: "2592000" } } : v === "simple" ? { type: v, params: { keep: "10" } } : { type: v, params: { cleanoutDays: "30" } };
+const versioningOf = (v: "simple" | "staggered" | "trashcan", maxAgeDays: number): { type: typeof v; params: Record<string, string> } =>
+  v === "staggered" ? { type: v, params: { maxAge: String(Math.round(maxAgeDays * 86_400)) } } : v === "simple" ? { type: v, params: { keep: "10" } } : { type: v, params: { cleanoutDays: "30" } };
+
+/** Keep only absolute string paths for known shared folders (trimmed, empties dropped). Throws on bad input. */
+export function cleanReplicaPaths(v: unknown): Record<string, string> {
+  if (v == null) return {};
+  if (typeof v !== "object" || Array.isArray(v)) throw new Error("replicaPaths must be an object");
+  const known = new Set(getSettings().sharedFolders.map((f) => f.id));
+  const out: Record<string, string> = {};
+  for (const [k, p] of Object.entries(v as Record<string, unknown>)) {
+    if (!known.has(k)) continue;
+    if (typeof p !== "string") throw new Error(`replicaPaths.${k} must be a string`);
+    const t = p.trim();
+    if (!t) continue;
+    if (t.length > 400 || /[\0\r\n]/.test(t)) throw new Error(`replicaPaths.${k} is invalid`);
+    if (!(/^[A-Za-z]:[\\/]/.test(t) || t.startsWith("/") || t.startsWith("\\\\"))) throw new Error(`replicaPaths.${k} must be an absolute path`);
+    out[k] = t;
+  }
+  return out;
+}
 
 export const needsPairing = (role: DeviceRole) => role === "replica" || role === "standby";
 
@@ -96,8 +116,8 @@ export function installCommands(hubUrl: string, token: string) {
   };
 }
 
-export function createDevice(name: string, role: DeviceRole, platform: Platform | null): DeviceRow {
-  return insertDevice({ id: uniqueId(name), name, role, token: newToken(), platform });
+export function createDevice(name: string, role: DeviceRole, platform: Platform | null, replicaPaths: Record<string, string> = {}): DeviceRow {
+  return insertDevice({ id: uniqueId(name), name, role, token: newToken(), platform, replicaPaths });
 }
 
 /** Register the host's own agent (arm-free) from a mounted agent.json. */
@@ -108,9 +128,12 @@ export function registerLocalAgent(): void {
     const cfg = JSON.parse(readFileSync(file, "utf8")) as { deviceId?: string; name?: string; role?: DeviceRole; token?: string };
     if (!cfg.deviceId || !cfg.token) throw new Error("agent.json needs deviceId and token");
     const agentUrl = process.env.ORBIT_LOCAL_AGENT_URL ?? "http://host.docker.internal:7420";
+    const role: DeviceRole = cfg.role ?? (getSettings().primaryMode === "arm-free" ? "primary" : "standby");
+    // arm-free mode: Immich runs here; the installer puts its tailnet URL in ORBIT_IMMICH_URL.
+    const immichUrl = role === "primary" ? process.env.ORBIT_IMMICH_URL?.trim() || undefined : undefined;
     const patch = {
-      name: cfg.name ?? cfg.deviceId, role: cfg.role ?? "standby", token: cfg.token, agentUrl, enrolled: true,
-      platform: "linux" as Platform,
+      name: cfg.name ?? cfg.deviceId, role, token: cfg.token, agentUrl, enrolled: true,
+      platform: "linux" as Platform, immichTailscaleUrl: immichUrl,
     };
     if (getDevice(cfg.deviceId)) updateDevice(cfg.deviceId, patch);
     else insertDevice({ id: cfg.deviceId, ...patch, pendingPair: needsPairing(patch.role) });

@@ -30,6 +30,7 @@ const THRESHOLDS: { key: keyof Thresholds; label: string }[] = [
   { key: "primaryOfflineDays", label: "PC offline (days)" },
   { key: "diskPercent", label: "Disk usage (%)" },
   { key: "ramPercent", label: "RAM usage (%)" },
+  { key: "libraryPercent", label: "Immich library volume (%)" },
 ];
 
 export function AlertSettingsForm({ api }: { api: SettingsApi }) {
@@ -133,12 +134,15 @@ export function AlertSettingsForm({ api }: { api: SettingsApi }) {
                   type="number"
                   inputMode="decimal"
                   min={0}
-                  value={draft.thresholds[t.key]}
+                  value={draft.thresholds[t.key] ?? 90}
                   onChange={(e) => patch({ thresholds: { ...draft.thresholds, [t.key]: Number(e.target.value) } })}
                 />
               </Field>
             ))}
           </div>
+          <p className="text-xs text-muted-foreground">
+            The library volume threshold is used in arm-free primary mode.
+          </p>
         </CardContent>
       </Card>
 

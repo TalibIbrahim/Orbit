@@ -1,9 +1,9 @@
 "use client";
 
-import type { AddDeviceResponse, DeviceRole, DeviceSummary, Platform } from "@orbit/shared";
+import { defaultReplicaPath, type AddDeviceResponse, type DeviceRole, type DeviceSummary, type HubSettings, type Platform } from "@orbit/shared";
 import { Check, Copy, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { apiGet, apiSend } from "@/lib/api";
-import { pickRole, useDevices } from "@/lib/hooks";
+import { pickRole, useDevices, usePrimaryMode } from "@/lib/hooks";
 import { usePoll } from "@/lib/use-poll";
 import { cn } from "@/lib/utils";
 
@@ -116,6 +116,11 @@ function PairStep({ deviceId, primary }: { deviceId: string; primary: DeviceSumm
 export default function AddDevicePage() {
   const { data: devices } = useDevices(30_000);
   const hasPrimary = !!pickRole(devices, "primary");
+  const { mode } = usePrimaryMode();
+  const armFree = mode === "arm-free";
+  const settings = usePoll(() => apiGet<HubSettings>("/api/settings"), 0);
+  const folders = useMemo(() => settings.data?.sharedFolders ?? [], [settings.data]);
+  const [pathEdits, setPathEdits] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [role, setRole] = useState<DeviceRole>("replica");
@@ -126,12 +131,24 @@ export default function AddDevicePage() {
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<AddDeviceResponse | null>(null);
 
-  const valid = name.trim() !== "" && (!manual || (agentUrl.trim() !== "" && token.trim() !== ""));
+  const pathFor = (id: string) => pathEdits[id] ?? defaultReplicaPath(id, platform);
+  const isAbs = (p: string) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("/");
+  const replicaPaths: Record<string, string> = Object.fromEntries(folders.map((f) => [f.id, pathFor(f.id).trim()]));
+  const pathsOk = role !== "replica" || Object.values(replicaPaths).every(isAbs);
+  const hostChosen = armFree && role === "primary";
+
+  const valid = !hostChosen && pathsOk && name.trim() !== "" && (!manual || (agentUrl.trim() !== "" && token.trim() !== ""));
 
   async function create() {
     setBusy(true);
     try {
-      const body = { name: name.trim(), role, platform, ...(manual ? { agentUrl: agentUrl.trim(), token: token.trim() } : {}) };
+      const body = {
+        name: name.trim(),
+        role,
+        platform,
+        ...(role === "replica" && folders.length > 0 ? { replicaPaths } : {}),
+        ...(manual ? { agentUrl: agentUrl.trim(), token: token.trim() } : {}),
+      };
       const res = await apiSend<AddDeviceResponse>("POST", "/api/devices", body);
       setCreated(res);
       setStep(manual ? 2 : 1);
@@ -170,9 +187,20 @@ export default function AddDevicePage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="replica">Replica</SelectItem>
-                      <SelectItem value="standby">Standby</SelectItem>
-                      {!hasPrimary ? <SelectItem value="primary">Primary</SelectItem> : null}
+                      {armFree ? (
+                        <>
+                          <SelectItem value="replica">Replica (PC, laptop, other devices)</SelectItem>
+                          <SelectItem value="primary" disabled={hasPrimary}>
+                            Primary host (arm-free)
+                          </SelectItem>
+                        </>
+                      ) : (
+                        <>
+                          <SelectItem value="replica">Replica</SelectItem>
+                          <SelectItem value="standby">Standby</SelectItem>
+                          {!hasPrimary ? <SelectItem value="primary">Primary</SelectItem> : null}
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -189,6 +217,59 @@ export default function AddDevicePage() {
                   </Select>
                 </div>
               </div>
+              {armFree && hasPrimary ? (
+                <p className="text-xs text-muted-foreground">
+                  Primary host is unavailable: arm-free is already registered as the primary.
+                </p>
+              ) : null}
+              {hostChosen ? (
+                <Alert>
+                  <TriangleAlert className="text-warning" />
+                  <AlertTitle>arm-free sets itself up</AlertTitle>
+                  <AlertDescription>
+                    <p>
+                      Run <code className="font-mono">sudo deploy/arm-free/scripts/install-arm-free.sh --mode arm-free</code>{" "}
+                      on the VM (add <code className="font-mono">--no-ml</code> to skip machine learning). It
+                      registers itself automatically; no install command is needed here.
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {role === "replica" ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Replicas are Receive Only copies with file versioning. The installer adds only Tailscale, Syncthing,
+                    Node and the Orbit agent (no Docker, no virtualization).
+                  </p>
+                  {folders.length > 0 ? (
+                    <div className="space-y-3">
+                      <Label>Replica folders</Label>
+                      {folders.map((f) => {
+                        const v = pathFor(f.id);
+                        const bad = v.trim() !== "" && !isAbs(v.trim());
+                        return (
+                          <div key={f.id} className="space-y-1.5">
+                            <Label htmlFor={`rp-${f.id}`} className="text-xs font-normal text-muted-foreground">
+                              {f.label} <span className="font-mono">({f.id})</span>
+                            </Label>
+                            <Input
+                              id={`rp-${f.id}`}
+                              value={v}
+                              aria-invalid={bad || undefined}
+                              onChange={(e) => setPathEdits({ ...pathEdits, [f.id]: e.target.value })}
+                              className="font-mono text-xs"
+                            />
+                            {bad ? <p className="text-xs text-danger">Use an absolute path.</p> : null}
+                          </div>
+                        );
+                      })}
+                      <p className="text-xs text-muted-foreground">
+                        Any drive, e.g. D:\Orbit\immich-library or /mnt/backup/immich-library
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3 rounded-2xl border p-3">
                 <Label htmlFor="d-manual" className="text-sm">
                   I already installed the agent
@@ -220,7 +301,7 @@ export default function AddDevicePage() {
               </p>
               <CodeBlock text={command} />
               <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                <li>Installs Tailscale, Syncthing and the Orbit agent.</li>
+                <li>Installs only Tailscale, Syncthing, Node and the Orbit agent (no Docker).</li>
                 <li>{platform === "windows" ? "Open PowerShell with Run as administrator." : "Needs root; the command uses sudo."}</li>
                 <li>The token is embedded in the command and shown only once.</li>
               </ul>

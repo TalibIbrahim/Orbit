@@ -1,7 +1,7 @@
 import type { AddDeviceResponse, AgentStatus, DeviceRole, Platform, SyncthingSummary } from "@orbit/shared";
 import { errMsg } from "@/lib/server/agents";
 import { insertDevice, listDevices, setCache, toRecord, updateDevice } from "@/lib/server/db";
-import { createDevice, installCommands, needsPairing, pairWithPrimary, summarize, uniqueId } from "@/lib/server/devices";
+import { cleanReplicaPaths, createDevice, installCommands, needsPairing, pairWithPrimary, summarize, uniqueId } from "@/lib/server/devices";
 import { fail, guard, json, readJson } from "@/lib/server/http";
 import { getSettings, hubUrlFor } from "@/lib/server/settings";
 
@@ -20,13 +20,25 @@ async function probe<T>(url: string, token: string, path: string): Promise<T> {
 
 export const POST = (req: Request) =>
   guard(async () => {
-    const b = await readJson<{ name?: string; role?: DeviceRole; platform?: Platform; agentUrl?: string; token?: string }>(req);
+    const b = await readJson<{
+      name?: string; role?: DeviceRole; platform?: Platform; agentUrl?: string; token?: string; replicaPaths?: Record<string, string>;
+    }>(req);
     const name = typeof b.name === "string" ? b.name.trim().slice(0, 60) : "";
     if (!name) return fail(400, "name is required");
     if (!b.role || !ROLES.includes(b.role)) return fail(400, "role must be primary, standby or replica");
     if (b.platform != null && !PLATFORMS.includes(b.platform)) return fail(400, "invalid platform");
     const settings = getSettings();
     const hub = hubUrlFor(req, settings);
+    if (settings.primaryMode === "arm-free" && b.role === "standby")
+      return fail(400, "arm-free primary mode has no standby: add other devices as replicas");
+    if (b.role === "primary" && listDevices().some((d) => d.role === "primary"))
+      return fail(409, "a primary device is already registered");
+    let replicaPaths: Record<string, string>;
+    try {
+      replicaPaths = b.role === "replica" ? cleanReplicaPaths(b.replicaPaths) : {};
+    } catch (e) {
+      return fail(400, (e as Error).message);
+    }
 
     // "Existing agent" mode: register an already-installed agent after verifying it answers.
     if (b.agentUrl || b.token) {
@@ -43,7 +55,7 @@ export const POST = (req: Request) =>
       const dev = insertDevice({
         id: uniqueId(name), name, role: b.role, token: b.token, agentUrl, enrolled: true, lastSeen: Date.now(),
         platform: status.health?.platform ?? b.platform ?? null, agentVersion: status.health?.agentVersion ?? null,
-        pendingPair: needsPairing(b.role),
+        pendingPair: needsPairing(b.role), replicaPaths,
       });
       setCache(dev.id, "/status", status);
       try {
@@ -58,7 +70,7 @@ export const POST = (req: Request) =>
     }
 
     if (!b.platform) return fail(400, "platform is required");
-    const dev = createDevice(name, b.role, b.platform);
+    const dev = createDevice(name, b.role, b.platform, replicaPaths);
     return json<AddDeviceResponse>({ device: toRecord(dev), token: dev.token, ...installCommands(hub, dev.token) }, 201);
   });
 

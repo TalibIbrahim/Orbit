@@ -1,6 +1,21 @@
 # Orbit
 
-Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It watches a small fleet (a Windows PC, an Oracle Always Free Arm VM, optional extra replicas), keeps an Immich photo library replicated with Syncthing, and gives you one place to see usage, replication health, backups and failover.
+Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It watches a small fleet (an Oracle Always Free Arm VM called "arm-free", a Windows PC, optional extra replicas), keeps an Immich photo library replicated with Syncthing, and gives you one place to see usage, replication health, backups and failover.
+
+## Choose a mode
+
+The setting `primaryMode` decides where Immich runs. Choose it when you install arm-free (`install-arm-free.sh --mode device|arm-free`, env `ORBIT_PRIMARY_MODE`, default `device`). It is shown and editable in Settings -> General, but changing it there does not move data or reconfigure Immich/Syncthing.
+
+| | Device primary (`device`, default) | arm-free primary (`arm-free`) |
+|---|---|---|
+| Where Immich runs | Home PC (Docker Desktop) | Permanently on arm-free |
+| What arm-free does | Standby replica; Immich starts only on Promote | Primary: Immich + hub + Syncthing (Send Only) |
+| Other devices | PC is the Send Only source | PC, laptop, extras are Receive Only replicas (any drive), no Docker |
+| Failover | Promote / Switch back buttons | Manual [disaster recovery](docs/failover-restore.md#disaster-recovery-arm-free-primary) on a replica with Docker |
+| Keep-alive | Recommended, on by default | Optional, off by default (Immich load usually keeps the VM busy) |
+| Storage limit | Library size follows the PC disk; arm-free holds a replica | 200 GB Oracle block storage in total (boot volume included) caps the library |
+
+**Device mode**
 
 ```
  iPhone (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
@@ -11,7 +26,7 @@ Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It wa
  | full library, source of  | -----------> |   immich-library, immich-db-dumps              |
  | truth                    |  immich-     | Orbit hub :3000  <-- polls every agent /60 s   |
  | daily Postgres dump 02:30|  library     | Orbit agent :7420 (systemd, host)              |
- | Orbit agent :7420        |  immich-db-  | Your own services (optional, tracked)         |
+ | Orbit agent :7420        |  immich-db-  | Your own services (optional, tracked)          |
  +--------------------------+  dumps       | Immich standby stack (started ONLY by Promote) |
                                            +------------------------------------------------+
  Extra replicas (Linux/Windows) are added with Devices -> Add device and receive the same folders.
@@ -19,11 +34,29 @@ Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It wa
 
 Single source of truth is the PC. The standby is a replica until you press Promote.
 
+**arm-free mode**
+
+```
+ iPhone (Immich app + Orbit PWA) ---- Tailscale (no public ports) ----+
+                                                                      |
+ PRIMARY: "arm-free" (Oracle A1.Flex 2 OCPU / 12 GB)            REPLICAS: PC, laptop, extras
+ +------------------------------------------------+  Syncthing  +---------------------------+
+ | Immich :2283 (server, Postgres, ML; bound to   |  Send Only  | Syncthing (Receive Only + |
+ |   the Tailscale IP), /srv/orbit/immich-library | ----------> |   staggered versioning)   |
+ | daily Postgres dump 02:30 -> immich-db-dumps   |  immich-    | Orbit agent :7420         |
+ | Orbit hub :3000, agent :7420, Syncthing        |  library,   | no Docker, no Immich      |
+ +------------------------------------------------+  immich-db- +---------------------------+
+                                                     dumps
+```
+
+Single source of truth is arm-free; every other device is a copy you can restore from. Sections below say **device mode** or **arm-free mode** where they differ.
+
 ## Contents
 
+0. [Choose a mode](#choose-a-mode)
 1. [Overview and features](#1-overview-and-features)
 2. [Set up arm-free](#2-set-up-arm-free)
-3. [Set up the PC](#3-set-up-the-pc)
+3. [Set up the PC and replicas](#3-set-up-the-pc-and-replicas)
 4. [Tailscale notes](#4-tailscale-notes)
 5. [Immich, Syncthing and restic](#5-immich-syncthing-and-restic)
 6. [iPhone setup](#6-iphone-setup)
@@ -47,16 +80,24 @@ Pages: Overview, Usage, Folders, Devices (bottom bar); Replication, Backups, Set
 | Idle-risk meter | Compares 7-day CPU p95, network and memory against Oracle's reclamation thresholds (all three under 20% = at risk). See [section 10](#10-keep-alive-and-idle-risk-meter). |
 | Storage quota | Used vs the 200 GB Oracle allowance (`storageQuotaGB`), split Photos / Services / System, growth per day and days until full. |
 | Folder limits | Per-folder size limit with three enforcement modes: `alert`, `pause-sync`, `hard`. See [section 7](#7-folder-storage-limits). |
-| Devices / Add device | Wizard creates a device and token and shows a one-line install command. Agents enroll themselves and the hub pairs Syncthing. |
+| Devices / Add device | Wizard creates a device and token and shows a one-line install command. Agents enroll themselves and the hub pairs Syncthing. In arm-free mode the roles are Primary host (arm-free, set up by the installer) and Replica (everything else). |
 | Replication health | Per replica and folder: up to date / syncing / offline, completion, lag, versioning type. |
 | Backups | Job cards (Immich dump, restic, prune, your own commands) with last run, next run, output size, "Run backup now". |
-| Promote standby | One button (Settings -> Standby) starts Immich on arm-free from the latest dump. Switch-back instructions on the same tab. |
-| Keep-alive | Toggle that runs NeverIdle on arm-free to avoid Oracle idle reclamation. |
-| LAN mode | The Immich link picks the LAN URL at home, the Tailscale URL away, or the standby URL after a promote. |
+| Promote standby (device mode) | One button (Settings -> Standby) starts Immich on arm-free from the latest dump. Switch-back instructions on the same tab. In arm-free mode this tab shows a disaster-recovery card instead. |
+| Keep-alive | Toggle that runs NeverIdle on arm-free to avoid Oracle idle reclamation (recommended in device mode, optional in arm-free mode). |
+| LAN mode | Device mode: the Immich link picks the LAN URL at home, the Tailscale URL away, or the standby URL after a promote. arm-free mode: it opens the arm-free URL (`ORBIT_IMMICH_URL`). |
 | PWA | Installable on the iPhone home screen, offline page, light/dark theme. |
 | Auto-updates | Containers via a daily systemd timer; agents self-update from the hub. |
 
-How the hub works: it polls every agent every 60 s and caches the last good response in SQLite, so an offline device shows "offline, last seen X" instead of errors. Alerts go to a Discord webhook and/or SMTP email (Settings -> Alerts): replica more than 24 h behind, PC offline more than 3 days, disk over 80%, RAM over 90%, service down, idle risk, folder limit, failed backup.
+How the hub works: it polls every agent every 60 s and caches the last good response in SQLite, so an offline device shows "offline, last seen X" instead of errors. Alerts go to a Discord webhook and/or SMTP email (Settings -> Alerts):
+
+| Alert | Mode | Default threshold |
+|---|---|---|
+| Replica behind | both | more than 24 h |
+| Primary offline (arm-free mode points to [disaster recovery](docs/failover-restore.md#disaster-recovery-arm-free-primary)) | both | more than 3 days |
+| Disk / RAM | both | disk over 80%, RAM over 90% |
+| Immich library volume nearly full (`library-near-limit`) | arm-free | volume holding `immich-library` at 90% (`thresholds.libraryPercent`), or the Oracle quota, or full within ~14 days |
+| Service down, idle risk, folder limit, failed backup | both | n/a |
 
 ### Tracking your own services
 
@@ -81,6 +122,8 @@ Per-service charts and the disk split come from the `services` list in `agent.js
 Measured: containers report CPU, RAM and network; systemd units report CPU and RAM, and network only if the unit has `IPAccounting=yes` (`systemctl edit <unit>`, add `[Service]` / `IPAccounting=yes`). Disk usage comes only from `paths`. The Storage quota view splits usage into **Photos** (services in the photos category), **Services** (everything else you track) and **System** (the rest of the disk).
 
 ## 2. Set up arm-free
+
+Same steps in both modes; only the install command and what it starts differ.
 
 ### 2.1 Create the VM
 
@@ -112,21 +155,35 @@ sudo tailscale up --ssh --hostname arm-free      # open the printed URL
 # From your PC/phone verify:  tailscale ssh ubuntu@arm-free   -> then remove the port-22 ingress rule in OCI.
 
 sudo git clone <your-repo-url> /opt/orbit-src
+# device mode (default; Immich lives on your PC, arm-free is the standby):
 sudo ORBIT_HUB_URL=http://arm-free.<tailnet>.ts.net:3000 /opt/orbit-src/deploy/arm-free/scripts/install-arm-free.sh
+# arm-free mode (Immich runs here permanently):
+sudo ORBIT_HUB_URL=http://arm-free.<tailnet>.ts.net:3000 /opt/orbit-src/deploy/arm-free/scripts/install-arm-free.sh --mode arm-free
 ```
 
-The installer is idempotent and never overwrites existing config. Optional environment variables:
+Flags: `--mode device|arm-free` (or `ORBIT_PRIMARY_MODE`), `--no-ml` (or `IMMICH_ML=0`; arm-free mode, no machine learning, so no smart search or face recognition). The installer is idempotent and never overwrites existing config; re-run with a different `--mode` / `--no-ml` to switch (the mode is stored in `deploy/arm-free/.env`). Optional environment variables:
 
 | Variable | Effect |
 |---|---|
 | `ORBIT_HUB_URL` | Written to `deploy/arm-free/.env` and the agent config (default `http://<tailscale ip>:3000`). Use the MagicDNS name. |
+| `ORBIT_PRIMARY_MODE`, `IMMICH_ML` | Same as `--mode` / `--no-ml`. |
 | `ORBIT_DEVICE_ID` | Device id in `/etc/orbit/agent.json` (default `arm-free`). |
 | `TS_AUTHKEY` | If Tailscale is not logged in, runs `tailscale up --ssh --authkey ... --hostname arm-free`. |
 | `SKIP_NEVERIDLE=1` | Do not download NeverIdle. |
 | `SKIP_START=1` | Install units and files but do not start the agent, timer or compose stack. |
 | `ORBIT_ROOT` (via lib.sh) | Data root, default `/srv/orbit`. The shipped agent config and compose files hardcode `/srv/orbit`, so leave it. |
 
-It installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit/bin/NeverIdle`), creates `/srv/orbit/{immich-library,immich-db-dumps,immich-standby-db,syncthing-config,orbit-data,replicas}`, symlinks `/opt/orbit/deploy` to the repo, writes `/etc/orbit/agent.json` (mode 640, group 1000), installs `orbit-agent.service`, `orbit-update.service` and `orbit-update.timer`, and runs `docker compose up -d --build` when Tailscale is up.
+Both modes: installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit/bin/NeverIdle`), creates `/srv/orbit/{immich-library,immich-db-dumps,immich-standby-db,immich-db,immich-ml-cache,syncthing-config,orbit-data,replicas}` (with a `*.partial` `.stignore` in `immich-db-dumps`), symlinks `/opt/orbit/deploy` to the repo, writes `/etc/orbit/agent.json` (mode 640, group 1000), installs `orbit-agent.service`, `orbit-update.service` and `orbit-update.timer`, creates `deploy/arm-free/immich/.env` and `immich-config.json`, and starts the hub stack with `docker compose up -d --build` when Tailscale is up.
+
+| | Device mode | arm-free mode |
+|---|---|---|
+| Agent config | from `agent.example.json` (role standby) | from `agent.primary.example.json` (role primary, keep-alive off by default, job `immich-db`) |
+| Immich | Not started (Promote does it). DB dir `/srv/orbit/immich-standby-db`. | Started by the installer from `deploy/arm-free/immich` (compose project `immich`), fresh database, no dump restore. Library `/srv/orbit/immich-library`, DB `/srv/orbit/immich-db`, port 2283 bound to the Tailscale IP only. |
+| `immich/.env` | You set `IMMICH_POSTGRES_IMAGE` and `DB_PASSWORD` to match the PC | Random `DB_PASSWORD` generated; default Postgres image is fine |
+| Machine learning | Off | On (`COMPOSE_PROFILES=ml`) unless `--no-ml`; limits `IMMICH_SERVER_CPUS=1.5`, `IMMICH_ML_CPUS=1.0`, `IMMICH_ML_MEM=3g`; job concurrency 1 via `immich/immich-config.json` |
+| Stored URL | n/a | `ORBIT_IMMICH_URL=http://arm-free.<tailnet>.ts.net:2283` in `deploy/arm-free/.env` |
+
+`immich-config.json` is loaded through `IMMICH_CONFIG_FILE`, which makes the settings it covers (ML on/off, job concurrency) **read-only in the Immich admin UI**. Edit the file instead and run `docker compose up -d` in `deploy/arm-free/immich`, or comment out `IMMICH_CONFIG_FILE` in `immich/.env` to manage them in the UI.
 
 ### 2.4 Review the .env files
 
@@ -136,10 +193,12 @@ It installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit
 |---|---|
 | `TAILSCALE_IP` | Output of `tailscale ip -4`. The hub (3000) binds to it. |
 | `ORBIT_HUB_URL` | URL other devices use to reach the hub. |
+| `ORBIT_PRIMARY_MODE` | `device` or `arm-free`; set by the installer. |
+| `ORBIT_IMMICH_URL` | arm-free mode: URL behind the Immich link; filled by the installer from the MagicDNS name. |
 | `ORBIT_PASSWORD` | Optional dashboard password. Empty = rely on Tailscale ACLs. |
 | `DISCORD_WEBHOOK_URL` | Optional; hub alerts and `update.sh` notifications. |
 
-`deploy/arm-free/immich-standby/.env`: see [section 5](#5-immich-syncthing-and-restic).
+`deploy/arm-free/immich/.env`: see [section 5](#5-immich-syncthing-and-restic).
 
 If you edit either file later: `cd /opt/orbit-src/deploy/arm-free && docker compose up -d --build`.
 
@@ -151,9 +210,16 @@ Syncthing GUI is loopback-only: `ssh -L 8384:127.0.0.1:8384 ubuntu@arm-free`, th
 
 ### 2.6 First run
 
-Open Overview: the **Getting started** checklist walks through the first steps (add the PC, pair folders, enable keep-alive, set up alerts). The keep-alive step is marked **Recommended**: a fresh arm-free mostly idles, so see [section 10](#10-keep-alive-and-idle-risk-meter) and Settings -> Standby.
+Open Overview: the **Getting started** checklist walks through the first steps.
 
-## 3. Set up the PC
+- **Device mode:** add the PC, pair folders, enable keep-alive (marked **Recommended**: a standby mostly idles, see [section 10](#10-keep-alive-and-idle-risk-meter) and Settings -> Standby), set up alerts.
+- **arm-free mode:** open `http://arm-free.<tailnet>.ts.net:2283` in a browser and create the Immich admin account first, then add replicas ([section 3.2](#32-replicas-add-device)), set up the phone ([section 6](#6-iphone-setup)) and alerts. Keep-alive is optional.
+
+## 3. Set up the PC and replicas
+
+### 3.1 The PC (device mode only)
+
+In arm-free mode skip this; the PC is just a replica ([3.2](#32-replicas-add-device)).
 
 1. Sign in to the hub and open Devices -> Add device. Name `pc`, role **Primary**, platform Windows. Note the **deviceId** and **token** (shown once).
 2. In an **elevated** Windows PowerShell 5.1, from a checkout of this repo on the PC:
@@ -205,6 +271,16 @@ New-NetFirewallRule -DisplayName "Immich 2283 (LAN+Tailscale)" -Direction Inboun
 
 The installer only opens 7420. Docker Desktop publishes 2283 on all interfaces, so restrict it like this and do not port-forward on your router.
 
+### 3.2 Replicas (Add device)
+
+Devices -> Add device creates a device and shows a one-line command to run on it (elevated PowerShell on Windows, `sudo` on Linux).
+
+- **Roles:** in device mode arm-free is the standby and the PC is the Primary. In arm-free mode the wizard offers **Primary host** (arm-free itself: set up by the installer, auto-registered, no command) and **Replica** (every other device, including your PC).
+- **Folder paths:** you choose where each replica folder lives, on any drive, for example `D:\Orbit\immich-library` and `D:\Orbit\immich-db-dumps`.
+- **Direction (arm-free mode):** arm-free's `immich-library` and `immich-db-dumps` are **Send Only**; each replica gets them as **Receive Only** with versioning (library staggered, dumps simple, keep 10). The hub pairs them automatically and retries while a device is offline. Local edits on a replica never propagate back.
+- **Versioning age:** the staggered `maxAge` is set in Settings -> General -> Replica versioning (default 30 days, range 1 to 3650). It is applied when a replica is (re)paired, so it does not change existing pairs. Old versions land in `.stversions` inside the replica folder.
+- **The replica installer adds only** Tailscale, Syncthing, Node 22 and the Orbit agent. No Docker, no virtualization, no Immich.
+
 ## 4. Tailscale notes
 
 - Enable MagicDNS in the admin console. Use `arm-free.<tailnet>.ts.net` and `<pc>.<tailnet>.ts.net` everywhere (hub URL, Immich external URL).
@@ -228,7 +304,7 @@ Tag arm-free with `sudo tailscale up --ssh --advertise-tags=tag:orbit --hostname
 
 ## 5. Immich, Syncthing and restic
 
-How replication works:
+How replication works (**device mode**; arm-free mode is described after the `.env` tables below):
 
 1. Immich on the PC writes to `UPLOAD_LOCATION`. Syncthing (Send Only) ships it to arm-free over Tailscale.
 2. A daily job on the PC (agent job `immich-db`, 02:30) runs `immich-db-dump.ps1`: `pg_dumpall --clean --if-exists` inside `immich_postgres`, gzipped, `docker cp` out, written as `immich-YYYYMMDD-HHmm.sql.gz`, last 14 kept. That folder is the Send Only `immich-db-dumps`.
@@ -236,17 +312,34 @@ How replication works:
 4. `prune-dumps.sh` on arm-free (04:45) keeps the newest 14 dumps (`KEEP_DUMPS`, `ORBIT_DUMP_DIR` override).
 5. Orbit shows lag and completion per folder; it alerts when a replica is more than 24 h behind.
 
-**Standby Immich `.env`** (`deploy/arm-free/immich-standby/.env`) must match the PC, otherwise a restore can fail:
+**Standby Immich `.env`, device mode** (`deploy/arm-free/immich/.env`) must match the PC, otherwise a restore can fail:
 
 | Key | Value |
 |---|---|
 | `IMMICH_POSTGRES_IMAGE` | Copy the exact `image:` of the `database` service from `C:\Immich\docker-compose.yml` (tag@sha256 digest). Required, compose refuses to start without it. |
 | `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE_NAME` | Same as in `C:\Immich\.env` (the installer generated a random `DB_PASSWORD`). |
 | `IMMICH_VERSION` | `v3` (same major as the PC). |
-| `UPLOAD_LOCATION` / `DB_DATA_LOCATION` | `/srv/orbit/immich-library` / `/srv/orbit/immich-standby-db` (already set). |
+| `UPLOAD_LOCATION` / `DB_DATA_LOCATION` | `/srv/orbit/immich-library` / `/srv/orbit/immich-standby-db` (set by the installer). |
 | `TAILSCALE_IP` | Filled by the installer. |
 
-The standby has no machine-learning container. After promoting, also disable ML in Immich (Administration -> Settings -> Machine Learning), because the restored DB carries the PC's settings. Also compare the `redis` image in `immich-standby/docker-compose.yml` (`valkey/valkey:9`) with the PC's compose and match it.
+The standby has no machine-learning container. After promoting, also disable ML in Immich (Administration -> Settings -> Machine Learning), because the restored DB carries the PC's settings. Also compare the `redis` image in `immich/docker-compose.yml` (`valkey/valkey:9`) with the PC's compose and match it.
+
+**arm-free mode.** The direction is reversed:
+
+1. Immich on arm-free writes to `/srv/orbit/immich-library`; Syncthing (Send Only) ships it to every replica.
+2. The agent job `immich-db` (02:30) runs `scripts/immich-dump.sh`: `pg_dumpall --clean --if-exists | gzip` into `/srv/orbit/immich-db-dumps/immich-YYYYMMDD-HHmm.sql.gz`, written as `.partial` and renamed when complete (the folder's `.stignore` with `*.partial` keeps half-written files off the wire). `prune-dumps.sh` then keeps the newest 14 (`KEEP_DUMPS`).
+3. Replicas hold Receive Only copies of both folders. Orbit shows lag per replica and alerts at more than 24 h.
+
+**Immich `.env`, arm-free mode** (`deploy/arm-free/immich/.env`, mode 600, created by the installer):
+
+| Key | Value |
+|---|---|
+| `DB_PASSWORD` | Random, generated by the installer. Keep a copy: [disaster recovery](docs/failover-restore.md#disaster-recovery-arm-free-primary) may need it. |
+| `IMMICH_VERSION`, `IMMICH_POSTGRES_IMAGE` | `v3` and the default image; change together when you change major. |
+| `UPLOAD_LOCATION` / `DB_DATA_LOCATION` | `/srv/orbit/immich-library` / `/srv/orbit/immich-db` |
+| `COMPOSE_PROFILES` | `ml` runs the machine-learning container; empty = off (`--no-ml`). |
+| `IMMICH_SERVER_CPUS`, `IMMICH_ML_CPUS`, `IMMICH_ML_MEM` | `1.5`, `1.0`, `3g` |
+| `IMMICH_CONFIG_FILE` | `/config/immich.json` (the generated `immich-config.json`; its settings are read-only in the admin UI) |
 
 ### restic
 
@@ -264,11 +357,20 @@ Add more paths (for example your own app backups) to the job `args` if you want 
 
 ## 6. iPhone setup
 
+**arm-free mode**
+
+1. Install the **Tailscale** app, sign in to the same tailnet and keep it on (VPN On Demand) so background backup works.
+2. Create the Immich admin account first, in a browser at `http://arm-free.<tailnet>.ts.net:2283`.
+3. Install the **Immich** app with the same server URL (the MagicDNS name; the installer stores it as `ORBIT_IMMICH_URL`). One URL works at home and away, no automatic switching needed.
+4. Enable backup in Immich. Add Orbit to the Home Screen as in step 4 below.
+
+**Device mode**
+
 1. Install the **Tailscale** app and sign in to the same tailnet.
 2. Install the **Immich** app. Server URL: `http://<pc-lan-ip>:2283` (home) first. Then Settings -> Networking -> **Automatic URL switching**: enable it, set your home Wi-Fi **SSID** and the local URL `http://<pc-lan-ip>:2283`, and add the external URL `http://<pc>.<tailnet>.ts.net:2283` (external URLs are tried in order). It needs the Location permission to read the SSID. Give the PC a DHCP reservation so the LAN IP is stable.
 3. Enable backup in Immich. Uploads queue while the PC is off and run when it is reachable (iOS background limits apply: opening the app periodically helps with large backlogs).
 4. Orbit on the Home Screen: open `http://arm-free.<tailnet>.ts.net:3000` in Safari -> Share -> **Add to Home Screen**.
-5. LAN mode: the Orbit "Open Immich" link probes the PC's LAN URL (`/api/server/ping`, 1.5 s). If Orbit is served over `https` the `http://` probe is blocked as mixed content and it falls back to the Tailscale URL. There is a manual override (Auto / LAN / Tailscale) next to the link, saved per browser. Set the LAN and Tailscale URLs on the PC device in Devices.
+5. LAN mode (device mode): the Orbit "Open Immich" link probes the PC's LAN URL (`/api/server/ping`, 1.5 s). If Orbit is served over `https` the `http://` probe is blocked as mixed content and it falls back to the Tailscale URL. There is a manual override (Auto / LAN / Tailscale) next to the link, saved per browser. Set the LAN and Tailscale URLs on the PC device in Devices.
 6. After a promote the link and the instructions point to the standby URL (`http://arm-free.<tailnet>.ts.net:2283`); change the Immich app's server URL accordingly.
 
 ## 7. Folder storage limits
@@ -298,8 +400,8 @@ Alternative without image files: **project quotas**. XFS: mount with `prjquota`,
 
 | Job (id) | Where | Schedule | Retention |
 |---|---|---|---|
-| Immich DB dump (`immich-db`) | PC, `immich-db-dump.ps1` | `30 2 * * *` | last 14 dumps (script) |
-| Prune Immich DB dumps (`prune-dumps`) | arm-free | `45 4 * * *` | last 14 (`KEEP_DUMPS`) |
+| Immich DB dump (`immich-db`) | device mode: PC, `immich-db-dump.ps1`; arm-free mode: arm-free, `scripts/immich-dump.sh` | `30 2 * * *` | last 14 dumps (script) |
+| Prune Immich DB dumps (`prune-dumps`) | arm-free (device mode job; in arm-free mode `immich-dump.sh` prunes itself) | `45 4 * * *` | last 14 (`KEEP_DUMPS`) |
 | Restic (`restic`) | arm-free | `0 3 * * *` | per your repo |
 
 ### Backup jobs
@@ -338,7 +440,9 @@ Backups page (or `POST /v1/backups/:job/run` on the agent): **Run backup now** o
 
 ## 9. Promote standby, switch back, restore test
 
-**Promote** (hub: Settings -> Standby -> Promote, type `PROMOTE`; or `sudo /opt/orbit/deploy/arm-free/scripts/promote-standby.sh [--force]` on arm-free). It does, in order:
+**arm-free mode:** there are no Promote / Switch back buttons and `promote-standby.sh` / `switch-back.sh` refuse to run. If arm-free is lost, follow the manual [Disaster recovery (arm-free primary)](docs/failover-restore.md#disaster-recovery-arm-free-primary): restore Immich on a replica that has Docker from its library copy and the newest dump.
+
+**Device mode.** **Promote** (hub: Settings -> Standby -> Promote, type `PROMOTE`; or `sudo /opt/orbit/deploy/arm-free/scripts/promote-standby.sh [--force]` on arm-free). It does, in order:
 
 1. Pauses the Syncthing folders `immich-library` and `immich-db-dumps` (`PROMOTE_FOLDERS`).
 2. Picks the newest `*.sql.gz`/`*.sql` in `/srv/orbit/immich-db-dumps` (or `ORBIT_DUMP_FILE`) and tests the gzip.
@@ -358,14 +462,16 @@ The full step lists, a restore-test checklist (dump restore, restic, Syncthing v
 
 Oracle may reclaim an Always Free A1 instance when, over 7 days, CPU p95 is under 20%, network under 20% **and** memory under 20% (all three). The Usage page shows each metric against its threshold; "at risk" appears only when all three are below. The meter needs history: coverage is low for the first week, so do not trust it before about 7 days of samples.
 
-A fresh arm-free mostly idles: the Immich standby stack only runs after a promote, so Syncthing and the hub use little CPU, memory and network. Expect the meter to show **at risk** until you add load or keep-alive.
+**Device mode:** a standby mostly idles (Immich only runs after a promote), so Syncthing and the hub use little CPU, memory and network. Expect the meter to show **at risk** until you add load or keep-alive.
 
-Keep-alive is the `keepalive` block in `/etc/orbit/agent.json`: `/opt/orbit/bin/NeverIdle -c 2h -m 2 -n 4h` (downloaded by the installer; see the NeverIdle README for flag meanings). The agent spawns it at nice 19, restarts it after 30 s if it dies, and remembers the toggle. With `"defaultEnabled": true` (the shipped arm-free config) the agent turns it on at first boot unless you switched it off. It is recommended on the standby: manage it in Settings -> Standby (Keep-alive card), and the Overview **Getting started** checklist links to it. The network percentage is computed against `networkBandwidthMbps` (2000 in the example config).
+**arm-free mode:** Immich's memory use (server + Postgres + ML) normally keeps the VM above the 20% memory threshold, so keep-alive is optional and off by default (`defaultEnabled: false` in `agent.primary.example.json`). Turn it on in Settings if the idle-risk card warns.
+
+Keep-alive is the `keepalive` block in `/etc/orbit/agent.json`: `/opt/orbit/bin/NeverIdle -c 2h -m 2 -n 4h` (downloaded by the installer; see the NeverIdle README for flag meanings). The agent spawns it at nice 19, restarts it after 30 s if it dies, and remembers the toggle. With `"defaultEnabled": true` (device-mode `agent.example.json`) the agent turns it on at first boot unless you switched it off. It is recommended on the standby: manage it in Settings -> Standby (Keep-alive card), and the Overview **Getting started** checklist links to it. The network percentage is computed against `networkBandwidthMbps` (2000 in the example config).
 
 ## 11. Auto-updates
 
-- **Containers:** `orbit-update.timer` runs `scripts/update.sh` daily at 04:30 (random delay up to 30 min). It pulls the main stack (Syncthing `2`, plus the locally built hub), recreates changed services, updates the Immich standby stack only if it is running, prunes images and posts changed images (or failures) to `DISCORD_WEBHOOK_URL`. Optional overrides go in `/etc/orbit/update.env` (`DISCORD_WEBHOOK_URL=...`, `ORBIT_AUTO_BUILD=1`). The `orbit-web` image is built locally, so it is rebuilt only with `ORBIT_AUTO_BUILD=1`, or manually after `git pull`: `cd /opt/orbit-src/deploy/arm-free && docker compose up -d --build`. Check: `systemctl list-timers orbit-update.timer`, `journalctl -u orbit-update`.
-- **Immich** is pinned to the major (`IMMICH_VERSION=v3`), so only minor/patch updates arrive. To move to a new major: read its release notes, update the PC first (`IMMICH_VERSION` in `C:\Immich\.env`, `docker compose pull; docker compose up -d`), let a fresh dump sync, then set the same value and the new `IMMICH_POSTGRES_IMAGE`/valkey tags in `immich-standby/.env` and compose, and rehearse a promote ([restore test](docs/failover-restore.md)).
+- **Containers:** `orbit-update.timer` runs `scripts/update.sh` daily at 04:30 (random delay up to 30 min). It pulls the main stack (Syncthing `2`, plus the locally built hub), recreates changed services, updates the Immich stack (arm-free mode: always; device mode: only while it is running after a promote), prunes images and posts changed images (or failures) to `DISCORD_WEBHOOK_URL`. Optional overrides go in `/etc/orbit/update.env` (`DISCORD_WEBHOOK_URL=...`, `ORBIT_AUTO_BUILD=1`). The `orbit-web` image is built locally, so it is rebuilt only with `ORBIT_AUTO_BUILD=1`, or manually after `git pull`: `cd /opt/orbit-src/deploy/arm-free && docker compose up -d --build`. Check: `systemctl list-timers orbit-update.timer`, `journalctl -u orbit-update`.
+- **Immich** is pinned to the major (`IMMICH_VERSION=v3`), so only minor/patch updates arrive. To move to a new major: read its release notes, update the PC first (`IMMICH_VERSION` in `C:\Immich\.env`, `docker compose pull; docker compose up -d`), let a fresh dump sync, then set the same value and the new `IMMICH_POSTGRES_IMAGE`/valkey tags in `immich/.env` and compose, and rehearse a promote ([restore test](docs/failover-restore.md)). In arm-free mode there is no PC to update first: after reading the release notes and taking a fresh dump, change `IMMICH_VERSION` and the image tags in `immich/.env` / compose, then `cd deploy/arm-free/immich && docker compose pull && docker compose up -d`.
 - **Agents** self-update: they poll `GET /api/agent/version` on the hub (version + sha256), download `/agent/orbit-agent.mjs`, replace the bundle and exit; systemd (`Restart=always`) or the Windows runner restarts them. Rebuilding the hub image ships new agents to every device (`docker compose up -d --build`).
 - **Windows:** scheduled task `Orbit Agent` runs `orbit-agent-runner.ps1`, a loop that restarts the agent 5 s after it exits (log `C:\ProgramData\Orbit\logs\agent.log`, 10 MB rotation). Docker Desktop and Tailscale update themselves; Syncthing is installed by winget (`winget upgrade Syncthing.Syncthing`).
 
@@ -404,7 +510,8 @@ agent/                  per-device agent (Node 22) -> agent/dist/orbit-agent.mjs
 web/                    Next.js 16 hub: dashboard + API routes (app/api), SQLite cache
 deploy/
   web.Dockerfile        hub image (context = repo root; also carries agent bundle + install templates)
-  arm-free/             docker-compose.yml, .env.example, agent.example.json, immich-standby/, scripts/, systemd/
+  arm-free/             docker-compose.yml, .env.example, agent.example.json (device mode), agent.primary.example.json (arm-free mode),
+                        immich/ (compose, .env.example, immich-config.example.json), scripts/ (incl. immich-dump.sh), systemd/
   windows/              install-pc.ps1, orbit-agent-runner.ps1, immich-db-dump.ps1
   install/              linux.sh.tmpl, windows.ps1.tmpl (served by the hub wizard)
   pc/agent.example.json
@@ -415,7 +522,7 @@ Hub environment: `ORBIT_DATA_DIR`, `ORBIT_HUB_URL`, `ORBIT_PASSWORD`, `DISCORD_W
 
 ## 13. Security notes
 
-- Nothing is exposed publicly. The hub, agent and Immich standby bind to the Tailscale IP; Syncthing's GUI is `127.0.0.1:8384`. Windows opens 7420 only for `100.64.0.0/10`.
+- Nothing is exposed publicly. The hub, agent and Immich bind to the Tailscale IP; Syncthing's GUI is `127.0.0.1:8384`. Windows opens 7420 only for `100.64.0.0/10`.
 - Each device has a random Bearer token (shown once in the wizard, stored in `agent.json`: mode 640/600 on Linux, SYSTEM+Administrators on Windows). Install tokens are single use (the install URL returns 410 once enrolled). The install scripts embed the token and an optional Tailscale auth key; do not paste those URLs into chat.
 - The Linux agent on arm-free **runs as root** because it needs the Docker socket (container stats, promote) and `du` across folders owned by different users. A compromised agent is root, so keep it tailnet-only and the token secret. Replicas installed by the wizard run the agent as a systemd service with the default user (root) too.
 - `ORBIT_PASSWORD` adds a login page (cookie) to the dashboard and API. `/api/enroll`, `/api/agent/version`, `/agent/*` and `/install/*` stay open so agents can enroll and update. Use it if other people share your tailnet.
@@ -430,7 +537,8 @@ Hub environment: `ORBIT_DATA_DIR`, `ORBIT_HUB_URL`, `ORBIT_PASSWORD`, `DISCORD_W
 | Immich dump job fails: Docker not running for the SYSTEM task | The task runs as SYSTEM and needs Docker Desktop's engine up (start at sign-in, user logged in). The script uses `\\.\pipe\dockerDesktopLinuxEngine`. Check the Backups card's output tail; Run backup now after starting Docker Desktop. |
 | Pairing never happens | The PC must be online with Syncthing running (it starts at logon). The hub retries on each poll. Enroll from the device's own agent; check `docker logs orbit-web`. |
 | Idle-risk coverage low | Normal during the first week: the meter needs 7 days of samples. |
-| Promote fails at restore | `IMMICH_POSTGRES_IMAGE` or `DB_*` differ from the PC; see `docker logs immich_postgres`. |
+| arm-free mode: Immich ML / job concurrency greyed out in the admin UI | Expected: `immich-config.json` is mounted via `IMMICH_CONFIG_FILE`. Edit `deploy/arm-free/immich/immich-config.json`, then `docker compose up -d`. |
+| Promote fails at restore (device mode) | `IMMICH_POSTGRES_IMAGE` or `DB_*` differ from the PC; see `docker logs immich_postgres`. |
 
 ## Verified facts (Oct 2026)
 

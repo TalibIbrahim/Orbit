@@ -1,18 +1,18 @@
-import type { ReplicationHealth } from "@orbit/shared";
+import type { PrimaryMode, ReplicationHealth } from "@orbit/shared";
 import { Monitor } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, timeAgo } from "@/lib/format";
 import { ToneBadge } from "./tone-badge";
 
-export function PrimaryCard({ data }: { data: ReplicationHealth }) {
+export function PrimaryCard({ data, mode }: { data: ReplicationHealth; mode?: PrimaryMode | null }) {
   const p = data.primary;
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <Monitor className="size-4 text-muted-foreground" />
-          {p?.name ?? "Primary (PC)"}
+          {p?.name ?? (mode === "arm-free" ? "Primary (arm-free)" : "Primary (PC)")}
           <Badge variant="secondary">Source of truth</Badge>
           {p ? (
             p.online ? (

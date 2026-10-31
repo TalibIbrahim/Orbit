@@ -1,0 +1,66 @@
+{
+  "deviceId": "REPLACE_WITH_DEVICE_ID",
+  "name": "arm-free",
+  "role": "primary",
+  "token": "REPLACE_WITH_RANDOM_TOKEN_openssl_rand_hex_24",
+  "listen": { "host": "100.x.y.z", "port": 7420 },
+  "hubUrl": "http://arm-free.your-tailnet.ts.net:3000",
+  "dataDir": "/var/lib/orbit",
+  "sampleIntervalSec": 60,
+  "sizeIntervalMin": 10,
+  "retentionDays": 35,
+  "networkBandwidthMbps": 2000,
+  "storageQuotaGB": 200,
+  "autoUpdate": true,
+  "docker": { "socketPath": "/var/run/docker.sock" },
+  "services": [
+    {
+      "name": "immich",
+      "category": "photos",
+      "containers": ["immich_"],
+      "systemdUnits": [],
+      "paths": ["/srv/orbit/immich-library", "/srv/orbit/immich-db"]
+    },
+    {
+      "name": "orbit",
+      "category": "services",
+      "containers": ["orbit-web", "syncthing"],
+      "systemdUnits": [],
+      "paths": []
+    }
+  ],
+  "syncthing": {
+    "url": "http://127.0.0.1:8384",
+    "configPath": "/srv/orbit/syncthing-config/config.xml"
+  },
+  "jobs": [
+    {
+      "id": "immich-db",
+      "name": "Immich database dump",
+      "kind": "pgdump",
+      "schedule": "30 2 * * *",
+      "command": "/opt/orbit/deploy/arm-free/scripts/immich-dump.sh",
+      "outputDir": "/srv/orbit/immich-db-dumps",
+      "retention": "newest 14 dumps",
+      "timeoutMin": 60
+    },
+    {
+      "id": "restic",
+      "name": "Restic offsite backup",
+      "kind": "restic",
+      "schedule": "0 3 * * *",
+      "command": "restic",
+      "args": ["backup", "/srv/orbit/immich-db-dumps", "/etc/orbit/agent.json", "--tag", "orbit"],
+      "env": {
+        "RESTIC_REPOSITORY": "REPLACE_e.g._b2:bucket:orbit_or_sftp:user@host:/path",
+        "RESTIC_PASSWORD_FILE": "/etc/orbit/restic-password"
+      },
+      "timeoutMin": 240
+    }
+  ],
+  "keepalive": {
+    "command": "/opt/orbit/bin/NeverIdle",
+    "args": ["-c", "2h", "-m", "2", "-n", "4h"],
+    "defaultEnabled": false
+  }
+}

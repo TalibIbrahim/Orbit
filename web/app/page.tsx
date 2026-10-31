@@ -9,14 +9,15 @@ import { ReplicationCard } from "@/components/overview/replication-card";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiGet } from "@/lib/api";
-import { pickRole, useAgent, useDevices } from "@/lib/hooks";
+import { pickHost, useAgent, useDevices, usePrimaryMode } from "@/lib/hooks";
 import { usePoll } from "@/lib/use-poll";
 
 export default function OverviewPage() {
   const devices = useDevices(15_000);
   const alerts = usePoll(() => apiGet<AlertsResponse>("/api/alerts"), 30_000);
   const replication = usePoll(() => apiGet<ReplicationHealth>("/api/replication"), 30_000);
-  const standby = pickRole(devices.data, "standby");
+  const { mode } = usePrimaryMode();
+  const standby = pickHost(devices.data, mode);
   const idle = useAgent<IdleRisk>(standby?.id, "/idle-risk", 5 * 60_000);
   const storage = useAgent<StorageBreakdown>(standby?.id, "/storage", 5 * 60_000);
 

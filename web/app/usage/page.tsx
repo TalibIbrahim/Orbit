@@ -12,7 +12,7 @@ import { StorageQuotaCard } from "@/components/usage/storage-quota-card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { pickRole, useAgent, useDevices } from "@/lib/hooks";
+import { pickHost, useAgent, useDevices, usePrimaryMode } from "@/lib/hooks";
 
 const RANGES: MetricsRange[] = ["1h", "24h", "7d", "30d"];
 
@@ -22,12 +22,13 @@ function UsageInner() {
   const params = useSearchParams();
   const devices = useDevices();
   const list: DeviceSummary[] | undefined = devices.data;
+  const { mode } = usePrimaryMode();
 
   const qDevice = params.get("device");
   const qRange = params.get("range");
   const range: MetricsRange = RANGES.includes(qRange as MetricsRange) ? (qRange as MetricsRange) : "24h";
   const device: DeviceSummary | undefined =
-    list?.find((d) => d.id === qDevice) ?? pickRole(list, "standby") ?? list?.[0];
+    list?.find((d) => d.id === qDevice) ?? pickHost(list, mode) ?? list?.[0];
   const id = device?.id;
 
   const setParam = useCallback(
@@ -46,7 +47,7 @@ function UsageInner() {
 
   const m = metrics.data;
   const services = status.data?.data?.services ?? [];
-  const showIdle = device?.role === "standby" || !!idle.data?.data;
+  const showIdle = device?.role === (mode === "arm-free" ? "primary" : "standby") || !!idle.data?.data;
 
   return (
     <>
@@ -110,7 +111,7 @@ function UsageInner() {
 
         {showIdle || storage.data?.data ? (
           <div className="grid gap-3 lg:grid-cols-2">
-            {showIdle && idle.data?.data ? <IdleRiskCard risk={idle.data.data} /> : null}
+            {showIdle && idle.data?.data ? <IdleRiskCard risk={idle.data.data} mode={mode} /> : null}
             {storage.data?.data ? <StorageQuotaCard storage={storage.data.data} /> : null}
           </div>
         ) : null}

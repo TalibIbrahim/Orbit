@@ -9,7 +9,7 @@ ORBIT_STATE_DIR="${ORBIT_STATE_DIR:-/var/lib/orbit}"
 LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ARM_FREE_DIR="$(cd "${LIB_DIR}/.." && pwd)"
 MAIN_COMPOSE="${ARM_FREE_DIR}/docker-compose.yml"
-IMMICH_COMPOSE="${ARM_FREE_DIR}/immich-standby/docker-compose.yml"
+IMMICH_COMPOSE="${ARM_FREE_DIR}/immich/docker-compose.yml"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(ts)" "$*"; }
