@@ -1,21 +1,25 @@
 /* Orbit service worker (hand-written, no workbox). Bump VERSION to invalidate caches. */
-const VERSION = "v1";
+const VERSION = "v2";
+// Must match ICON_VERSION in lib/icons.ts (cache-busting query on the PWA icons).
+const ICON_VERSION = "2";
 const SHELL_CACHE = `orbit-shell-${VERSION}`;
 const STATIC_CACHE = `orbit-static-${VERSION}`;
 const PAGES_CACHE = `orbit-pages-${VERSION}`;
 const API_CACHE = `orbit-api-${VERSION}`;
 const ALL_CACHES = [SHELL_CACHE, STATIC_CACHE, PAGES_CACHE, API_CACHE];
 
-const PRECACHE = [
-  "/",
-  "/offline",
-  "/manifest.webmanifest",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/maskable-512.png",
-  "/icons/apple-touch-icon.png",
-  "/icons/icon.svg",
+const ICONS = [
+  `/icons/icon-192.png?v=${ICON_VERSION}`,
+  `/icons/icon-512.png?v=${ICON_VERSION}`,
+  `/icons/icon-maskable-512.png?v=${ICON_VERSION}`,
+  "/icon.svg",
+  "/favicon.ico",
+  "/apple-icon.png",
 ];
+const PRECACHE = ["/", "/offline", "/manifest.webmanifest", ...ICONS];
+// Icons and the manifest are fetched network-first so a new icon replaces the old one at once;
+// the cached copy (matched without the query string) is only used offline.
+const ICON_PATHS = new Set(["/manifest.webmanifest", ...ICONS.map((u) => u.split("?")[0])]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -44,14 +48,14 @@ function withCacheHeader(response) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function networkFirst(request, cacheName, { markCached = false, fallback } = {}) {
+async function networkFirst(request, cacheName, { markCached = false, fallback, ignoreSearch = false } = {}) {
   const cache = await caches.open(cacheName);
   try {
     const response = await fetch(request);
     if (response.ok) cache.put(request, response.clone()).catch(() => {});
     return response;
   } catch (err) {
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, { ignoreSearch });
     if (cached) return markCached ? withCacheHeader(cached) : cached;
     if (fallback) {
       const fb = await fallback();
@@ -103,7 +107,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (PRECACHE.includes(url.pathname)) {
-    event.respondWith(caches.match(request).then((hit) => hit || fetch(request)));
+  if (ICON_PATHS.has(url.pathname)) {
+    event.respondWith(networkFirst(request, SHELL_CACHE, { ignoreSearch: true }));
   }
 });

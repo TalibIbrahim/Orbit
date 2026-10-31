@@ -3,7 +3,7 @@ import { AUTH_COOKIE, authToken, safeEqual } from "@/lib/server/auth";
 
 const OPEN = [
   /^\/login$/, /^\/api\/login$/, /^\/api\/agent\/version$/, /^\/agent\//, /^\/install\//,
-  /^\/manifest\.webmanifest$/, /^\/icons\//, /^\/sw\.js$/, /^\/_next\//, /^\/favicon\.ico$/, /^\/icon\.svg$/, /^\/offline/,
+  /^\/manifest\.webmanifest$/, /^\/icons\//, /^\/sw\.js$/, /^\/_next\//, /^\/favicon\.ico$/, /^\/icon\.svg$/, /^\/apple-icon\.png$/, /^\/offline/,
 ];
 
 export function proxy(req: NextRequest) {

@@ -14,7 +14,9 @@ export const metadata: Metadata = {
   description: "Self-hosted storage and server dashboard",
   applicationName: "Orbit",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Orbit" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  // Tab / home-screen icons come from the app/ file conventions (all generated from app/icon.svg):
+  //   icon.svg -> <link rel="icon" type="image/svg+xml">, favicon.ico (16/32/48), apple-icon.png (180).
+  // Next.js adds a content hash to each URL, so a changed icon is never served stale.
   formatDetection: { telephone: false },
 };
 

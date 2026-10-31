@@ -525,7 +525,11 @@ npm install                                  # root, npm workspaces: packages/sh
 ORBIT_DATA_DIR=./.data npm run dev           # hub on http://localhost:3000 (SQLite in ./.data)
 npm run build                                # agent bundle (agent/dist) then Next.js build
 npm run typecheck                            # agent + web
+npm test                                     # agent tests (+ agent.json migration test where jq is installed)
+npm run icons -w web                         # regenerate favicon/PWA icons from web/app/icon.svg (output is committed)
 ```
+
+Icons: `web/app/icon.svg` is the only source. `npm run icons -w web` writes `app/favicon.ico` (16/32/48, simplified mark at 16/32), `app/apple-icon.png` (180, opaque) and `public/icons/icon-{192,512,maskable-512}.png`. Next.js hashes the `app/` icon URLs itself; after changing the PNGs in `public/icons`, bump `ICON_VERSION` in `web/lib/icons.ts` and `web/public/sw.js`.
 
 The hub serves the agent bundle from `../agent/dist` and install templates from `../deploy/install` when run from `web/` (override with `ORBIT_AGENT_DIST`, `ORBIT_INSTALL_TEMPLATES`), so run `npm run build:agent` once before testing the Add device wizard.
 

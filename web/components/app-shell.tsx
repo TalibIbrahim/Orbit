@@ -17,7 +17,7 @@ function Brand() {
   return (
     <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/icons/icon.svg" alt="" className="size-7" />
+      <img src="/icon.svg" alt="" className="size-7" />
       <span className="text-lg">Orbit</span>
     </Link>
   );
