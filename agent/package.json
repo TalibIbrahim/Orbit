@@ -1,0 +1,22 @@
+{
+  "name": "@orbit/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --experimental-strip-types --no-warnings src/index.ts --config ./agent.dev.json",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/orbit-agent.mjs"
+  },
+  "dependencies": {
+    "@orbit/shared": "*",
+    "croner": "^9.0.0",
+    "systeminformation": "^5.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "deviceId": "REPLACE_WITH_DEVICE_ID",
+  "name": "pc",
+  "role": "primary",
+  "token": "REPLACE_WITH_RANDOM_TOKEN_24_bytes_hex",
+  "listen": { "host": "100.x.y.z", "port": 7420 },
+  "hubUrl": "http://arm-free.your-tailnet.ts.net:3000",
+  "dataDir": "C:\\ProgramData\\Orbit\\data",
+  "sampleIntervalSec": 60,
+  "sizeIntervalMin": 10,
+  "retentionDays": 35,
+  "autoUpdate": true,
+  "services": [
+    {
+      "name": "immich",
+      "category": "photos",
+      "containers": ["immich_"],
+      "paths": ["D:\\Immich\\library"]
+    }
+  ],
+  "syncthing": {
+    "url": "http://127.0.0.1:8384",
+    "configPath": "C:\\Users\\YOU\\AppData\\Local\\Syncthing\\config.xml"
+  },
+  "jobs": [
+    {
+      "id": "immich-db",
+      "name": "Immich DB dump",
+      "kind": "pgdump",
+      "schedule": "30 2 * * *",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "C:\\Program Files\\Orbit\\immich-db-dump.ps1",
+        "-DumpPath", "D:\\Immich\\db-dumps"
+      ],
+      "outputDir": "D:\\Immich\\db-dumps",
+      "retention": "last 14 dumps",
+      "timeoutMin": 30
+    }
+  ]
+}

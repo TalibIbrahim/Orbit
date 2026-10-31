@@ -1,0 +1,17 @@
+[Unit]
+Description=Orbit container auto-update (docker compose pull + up)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Optional overrides, e.g. DISCORD_WEBHOOK_URL=... ORBIT_AUTO_BUILD=1
+EnvironmentFile=-/etc/orbit/update.env
+ExecStart=/opt/orbit/deploy/arm-free/scripts/update.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+
+# Giving Minecraft CPU priority: compose already sets cpu_shares (minecraft 2048, syncthing 512,
+# orbit-web 256). To change it live without recreating the container:
+#   docker update --cpu-shares 4096 minecraft

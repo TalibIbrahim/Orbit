@@ -1,0 +1,25 @@
+[Unit]
+Description=Orbit agent
+Documentation=https://github.com/OWNER/orbit
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as root on purpose: it needs the Docker socket (container stats, promote) and
+# `du` across folders owned by different users (syncthing uid 1000, containers' root).
+# Tradeoff: a compromised agent == root. It only listens on the Tailscale IP and
+# requires a Bearer token; keep /etc/orbit/agent.json at mode 0600.
+ExecStart=/usr/bin/node /opt/orbit/agent/orbit-agent.mjs --config /etc/orbit/agent.json
+# Self-update: the agent replaces orbit-agent.mjs and exits; systemd brings it back on the new code.
+Restart=always
+RestartSec=5
+# Low CPU priority so the agent never competes with Minecraft.
+Nice=5
+StateDirectory=orbit
+Environment=NODE_ENV=production
+# Keep Node's heap modest on a 12 GB box shared with Minecraft.
+Environment=NODE_OPTIONS=--max-old-space-size=256
+
+[Install]
+WantedBy=multi-user.target
