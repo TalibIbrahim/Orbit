@@ -56,6 +56,9 @@ async function newestFile(dir: string, depth = 0): Promise<{ name: string; bytes
     return null;
   }
   for (const e of entries) {
+    // Not backup artifacts: hidden entries (Syncthing's .stfolder marker, .stignore, .stversions),
+    // files still being written, Syncthing temp files.
+    if (e.name.startsWith(".") || e.name.startsWith("~syncthing~") || /\.(partial|tmp)$/i.test(e.name)) continue;
     const p = join(dir, e.name);
     try {
       let cand: { name: string; bytes: number; mtime: number } | null = null;

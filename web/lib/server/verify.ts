@@ -11,7 +11,7 @@ import type {
 import {
   capWatermark, diffCopy, offloadDecision, overallWatermark, pickHashSample, recommendedCutoff,
 } from "@/lib/verify/logic";
-import { agentSend, cachedOnly, errMsg, isOnline } from "./agents";
+import { agentErrMsg, agentSend, cachedOnly, errMsg, isOnline } from "./agents";
 import { db, type DeviceRow, listDevices } from "./db";
 import { primaryHost } from "./devices";
 import { immichSnapshot, immichUsers, type ImmichConn, ImmichError } from "./immich";
@@ -136,7 +136,10 @@ function syncState(d: DeviceRow, isHost: boolean): { syncOk: boolean; issues: st
 /** Newest successful Immich DB dump on the Immich host (pgdump job artifact). */
 function newestDump(host: DeviceRow): number | null {
   const jobs = cachedOnly<BackupsResponse>(host.id, "/backups")?.jobs ?? [];
-  const times = jobs.filter((j) => j.kind === "pgdump").map((j) => j.latestArtifact?.mtime ?? (j.lastRun?.ok ? j.lastRun.finishedAt : null));
+  // Only real dump files count (older agents also reported Syncthing's marker file as the artifact).
+  const times = jobs
+    .filter((j) => j.kind === "pgdump")
+    .map((j) => (j.latestArtifact && /\.sql(\.gz)?$/i.test(j.latestArtifact.name) ? j.latestArtifact.mtime : j.lastRun?.ok ? j.lastRun.finishedAt : null));
   const ok = times.filter((t): t is number => typeof t === "number");
   return ok.length ? Math.max(...ok) : null;
 }
@@ -262,7 +265,7 @@ async function runVerification(trigger: VerifyTrigger): Promise<void> {
       };
       return { copy, manifest, sync };
     } catch (e) {
-      return { copy: emptyCopy(d, isHost, errMsg(e)), manifest: null };
+      return { copy: emptyCopy(d, isHost, agentErrMsg(e)), manifest: null };
     }
   };
 

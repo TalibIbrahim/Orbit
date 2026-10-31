@@ -5,7 +5,7 @@
  */
 import type { SyncControlState, SyncHoldReason, SyncHoldRequest, SyncHoldState, SyncSchedule } from "@orbit/shared";
 import { nextChange, scheduleAllows, validateSchedule } from "@/lib/sync/schedule";
-import { agentSend, errMsg, isOnline } from "./agents";
+import { agentErrMsg, agentSend, isOnline } from "./agents";
 import { db, type DeviceRow, listDevices } from "./db";
 import { getSettings } from "./settings";
 
@@ -67,9 +67,7 @@ async function pushTo(d: DeviceRow, req: SyncHoldRequest, key: string): Promise<
     const failed = st.folders.filter((f) => f.error).map((f) => `${f.id}: ${f.error}`);
     mem.sent.set(d.id, { key, at: Date.now(), ok: failed.length === 0, ...(failed.length ? { error: failed.join("; ") } : {}) });
   } catch (e) {
-    const msg = errMsg(e);
-    const old = /404|not found/i.test(msg);
-    mem.sent.set(d.id, { key, at: Date.now(), ok: false, error: old ? "agent too old for sync control (it updates itself from the hub)" : msg });
+    mem.sent.set(d.id, { key, at: Date.now(), ok: false, error: agentErrMsg(e) });
   }
 }
 

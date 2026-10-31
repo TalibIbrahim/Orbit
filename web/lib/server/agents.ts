@@ -26,6 +26,15 @@ export class AgentError extends Error {
 
 export const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+export const OLD_AGENT_MSG =
+  "agent update pending: this device runs an older Orbit agent (it updates itself within 6 h, or restart the Orbit Agent task / service)";
+
+/** A route the device's agent does not know yet = the agent is older than the hub. */
+export function isOldAgentError(e: unknown): boolean {
+  return /no route (GET|POST|PATCH|DELETE) \/v1\//.test(errMsg(e));
+}
+export const agentErrMsg = (e: unknown): string => (isOldAgentError(e) ? OLD_AGENT_MSG : errMsg(e));
+
 async function agentFetch(device: DeviceRow, method: string, path: string, body?: unknown, timeoutMs = TIMEOUT_MS): Promise<Response> {
   if (!device.agentUrl) throw new AgentError("device is not enrolled yet");
   const url = `${device.agentUrl.replace(/\/+$/, "")}/v1${path.startsWith("/") ? path : `/${path}`}`;

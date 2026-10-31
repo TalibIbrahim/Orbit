@@ -1,7 +1,8 @@
-import { cachedGet, errMsg } from "./agents";
+import type { SyncthingSummary } from "@orbit/shared";
+import { cachedGet, cachedOnly, errMsg, isOnline } from "./agents";
 import { evaluateAlerts } from "./alerts";
 import { type DeviceRow, listDevices } from "./db";
-import { needsPairing, pairWithPrimary, registerLocalAgent } from "./devices";
+import { needsPairing, pairWithPrimary, primaryHost, registerLocalAgent } from "./devices";
 import { immichNewestUpload } from "./immich";
 import { getSettings, immichApiKey } from "./settings";
 import { applySyncControl } from "./sync-control";
@@ -11,6 +12,34 @@ import { updateReplicaSync } from "./replication";
 const g = globalThis as unknown as { __orbitPoller?: boolean };
 
 const FAST_MS = 60_000;
+const REPAIR_EVERY_MS = 60 * 60_000;
+const repairAt = new Map<string, number>();
+
+/**
+ * Self-heal: a replica whose shared folder is missing, not Receive Only, or has no versioning
+ * (e.g. folders created before pairing, or after a mode switch) is re-paired, at most once an hour.
+ * Pairing only changes Syncthing folder settings; it never touches files.
+ */
+async function repairReplicas(): Promise<void> {
+  const host = primaryHost();
+  const shared = getSettings().sharedFolders.map((f) => f.id);
+  for (const d of listDevices()) {
+    if (!d.enrolled || d.pendingPair || !needsPairing(d.role) || d.id === host?.id || !isOnline(d)) continue;
+    const own = cachedOnly<SyncthingSummary>(d.id, "/syncthing");
+    if (!own?.available) continue;
+    const bad = shared
+      .map((id) => {
+        const f = own.folders.find((x) => x.id === id);
+        return !f ? `${id} not shared` : f.type !== "receiveonly" ? `${id} is ${f.type}` : !f.versioning ? `${id} has no versioning` : null;
+      })
+      .filter(Boolean);
+    if (!bad.length || Date.now() - (repairAt.get(d.id) ?? 0) < REPAIR_EVERY_MS) continue;
+    repairAt.set(d.id, Date.now());
+    console.log(`[poll] re-pairing ${d.id}: ${bad.join(", ")}`);
+    const err = await pairWithPrimary(d);
+    if (err) console.warn(`[poll] re-pairing ${d.id} failed:`, err);
+  }
+}
 const SLOW_EVERY = 5; // ticks
 
 async function pollDevice(d: DeviceRow, slow: boolean): Promise<void> {
@@ -37,6 +66,7 @@ async function tick(n: number): Promise<void> {
       else console.log(`[poll] paired ${d.id} with primary`);
     }
   }
+  await repairReplicas().catch((e) => console.warn("[poll] repair:", errMsg(e)));
   // Pause sync / schedule: push the desired hold to devices (re-asserted every 10 min).
   await applySyncControl().catch((e) => console.warn("[sync-control]", errMsg(e)));
   updateReplicaSync();
