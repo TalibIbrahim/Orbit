@@ -19,7 +19,7 @@ export default function BackupsPage() {
       <Card size="sm">
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Minecraft backups run every 30 min plus daily snapshots; limit the backup folder in{" "}
+            Backup jobs are defined per device in agent.json (name, command, schedule, retention). Limit the backup folder in{" "}
             <Link href="/folders" className="text-primary underline underline-offset-2">
               Folders
             </Link>

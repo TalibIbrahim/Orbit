@@ -1,7 +1,7 @@
 "use client";
 
 import type { JobKind, JobSummary } from "@orbit/shared";
-import { Archive, Box, ChevronDown, Database, Loader2, Play, Terminal, type LucideIcon } from "lucide-react";
+import { Archive, ChevronDown, Database, Loader2, Play, Terminal, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import { cn } from "@/lib/utils";
 
 const KIND_ICON: Record<JobKind, LucideIcon> = {
   pgdump: Database,
-  minecraft: Box,
   restic: Archive,
   command: Terminal,
 };

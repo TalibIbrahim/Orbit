@@ -54,24 +54,26 @@ export interface ContainerStat {
   name: string;
   image: string;
   state: ContainerState;
-  service: string | null; // configured service it belongs to (e.g. "immich", "minecraft")
+  service: string | null; // configured service it belongs to (e.g. "immich")
   cpu: number;
   memUsed: number;
   netRx: number; // bytes/s
   netTx: number;
 }
 
+// A service is whatever the device's agent.json "services" list says: any set of Docker
+// containers (name prefixes) and/or systemd units (Linux), plus directories counted as its disk usage.
 export interface ServiceStat {
   name: string;
-  category: StorageCategory;
+  category: ServiceCategory;
   cpu: number;
   memUsed: number;
-  netRx: number;
+  netRx: number; // containers only; systemd units report 0 unless IPAccounting=yes
   netTx: number;
   diskUsed: number | null; // sum of configured paths, null until first measurement
-  containersRunning: number;
-  containersExpected: number; // containers matched by config (running or not)
-  up: boolean; // containersExpected > 0 && all matched containers running
+  running: number; // matched containers + systemd units currently running
+  expected: number; // matched containers (running or not) + configured systemd units
+  up: boolean; // expected > 0 && running === expected
 }
 
 export interface TailscaleInfo {
@@ -160,14 +162,17 @@ export interface IdleRisk {
 }
 
 // ───────────────────────────── Storage breakdown (quota card) ─────────────────────────────
-export type StorageCategory = "photos" | "minecraft" | "other";
+export type ServiceCategory = "photos" | "services";
+// photos = services with category "photos"; services = all other configured service paths;
+// system = everything else on the disks (OS, Docker images, logs, ...).
+export type StorageCategory = ServiceCategory | "system";
 
 export interface StorageBreakdown {
   ts: number;
   quotaBytes: number | null; // e.g. 200 GB Oracle block storage; null if not configured
   provisionedBytes: number; // sum of disk totals
   usedBytes: number; // sum of disk used
-  categories: { category: StorageCategory; label: string; bytes: number }[]; // "other" = used - photos - minecraft
+  categories: { category: StorageCategory; label: string; bytes: number }[]; // system = used - photos - services
   growthBytesPerDay: number | null; // linear regression over last 7d of total used
   daysUntilFull: number | null; // vs quota (or provisioned if no quota); null if not growing
 }
@@ -275,7 +280,7 @@ export interface SyncthingPairRequest {
 }
 
 // ───────────────────────────── Backups / jobs ─────────────────────────────
-export type JobKind = "pgdump" | "restic" | "minecraft" | "command";
+export type JobKind = "pgdump" | "restic" | "command";
 
 export interface JobRun {
   id: number;
@@ -317,6 +322,7 @@ export interface BackupsResponse {
 // ───────────────────────────── Keep-alive / promote ─────────────────────────────
 export interface KeepaliveState {
   supported: boolean; // configured on this device
+  recommended: boolean; // true on the standby VM (Oracle idle reclamation)
   enabled: boolean;
   running: boolean;
   pid: number | null;

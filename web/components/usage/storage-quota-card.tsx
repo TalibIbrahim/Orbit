@@ -6,8 +6,8 @@ import { formatBytes, formatDays } from "@/lib/format";
 
 const CAT_COLOR: Record<StorageCategory, string> = {
   photos: "var(--chart-1)",
-  minecraft: "var(--chart-3)",
-  other: "var(--chart-4)",
+  services: "var(--chart-3)",
+  system: "var(--chart-4)",
 };
 
 export function storageSegments(s: StorageBreakdown) {

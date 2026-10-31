@@ -33,7 +33,7 @@ env_file_get() {
 # Load .env of the main stack into the environment for variables we need (does not override).
 load_main_env() {
   local k v
-  for k in DISCORD_WEBHOOK_URL ORBIT_HUB_URL TAILSCALE_IP RCON_PASSWORD; do
+  for k in DISCORD_WEBHOOK_URL ORBIT_HUB_URL TAILSCALE_IP; do
     if [ -z "${!k:-}" ]; then
       v="$(env_file_get "${ARM_FREE_DIR}/.env" "$k")"
       [ -n "$v" ] && export "$k=$v"

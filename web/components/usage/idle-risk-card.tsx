@@ -4,6 +4,7 @@ import { CheckCircle2, TriangleAlert } from "lucide-react";
 import type { IdleMetric, IdleRisk } from "@orbit/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatPercent } from "@/lib/format";
 
@@ -89,6 +90,11 @@ export function IdleRiskCard({ risk }: { risk: IdleRisk }) {
         {risk.metrics.map((m) => (
           <Meter key={m.key} m={m} />
         ))}
+        {risk.atRisk || risk.coverage < 0.5 ? (
+          <Link href="/settings?tab=standby" className="text-sm font-medium text-primary underline underline-offset-2">
+            Set up keep-alive on the standby
+          </Link>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           Based on {days} of {risk.windowDays} days of samples. Network % uses a {risk.networkBandwidthMbps} Mbps
           bandwidth denominator.

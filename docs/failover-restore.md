@@ -76,7 +76,7 @@ ls -R /tmp/restore-test | head -50
 ```
 
 - [ ] Latest snapshot is under 36 h old.
-- [ ] `tar -I zstd -tf /tmp/restore-test/srv/orbit/minecraft-backups/daily/<newest>.tar.zst >/dev/null` succeeds (or `30min/`).
+- [ ] If you run a custom archive job: `tar -I zstd -tf /tmp/restore-test/srv/orbit/app-backups/<newest>.tar.zst >/dev/null` succeeds.
 - [ ] `/tmp/restore-test/etc/orbit/agent.json` is present and parses (`jq . ...`).
 - [ ] `rm -rf /tmp/restore-test`.
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { PageHeader } from "@/components/page-header";
 import { AlertSettingsForm } from "@/components/settings/alert-settings-form";
 import { AlertsList } from "@/components/settings/alerts-list";
@@ -8,13 +10,15 @@ import { StandbyTab } from "@/components/settings/standby-tab";
 import { useSettings } from "@/components/settings/use-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export default function SettingsPage() {
+function SettingsInner() {
   const api = useSettings();
+  const tabParam = useSearchParams().get("tab");
+  const initial = tabParam === "standby" || tabParam === "general" ? tabParam : "alerts";
 
   return (
     <div>
       <PageHeader title="Settings" description="Alerts, keep-alive and standby promotion" />
-      <Tabs defaultValue="alerts">
+      <Tabs defaultValue={initial}>
         <TabsList>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="standby">Standby</TabsTrigger>
@@ -32,5 +36,13 @@ export default function SettingsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense>
+      <SettingsInner />
+    </Suspense>
   );
 }

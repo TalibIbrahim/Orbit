@@ -12,6 +12,5 @@ Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=30min
 
-# Giving Minecraft CPU priority: compose already sets cpu_shares (minecraft 2048, syncthing 512,
-# orbit-web 256). To change it live without recreating the container:
-#   docker update --cpu-shares 4096 minecraft
+# CPU priority: compose already sets cpu_shares (syncthing 512, orbit-web 256). To change it live without recreating the container:
+#   docker update --cpu-shares 1024 syncthing

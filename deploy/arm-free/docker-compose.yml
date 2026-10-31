@@ -32,40 +32,9 @@ services:
       # Hub database/settings. Must be writable by uid 1000 (install script chowns it).
       - /srv/orbit/orbit-data:/data
       - /etc/orbit/agent.json:/run/orbit/agent.json:ro
-    # CPU weight (relative, only matters under contention): the hub is light.
+    # CPU weight (relative, only matters under contention): the hub is light, so it gets a low share.
     cpu_shares: 256
     mem_limit: 512m
-    labels:
-      - "orbit.update-notify=true"
-
-  minecraft:
-    image: itzg/minecraft-server:latest
-    container_name: minecraft
-    restart: unless-stopped
-    tty: true
-    stdin_open: true
-    ports:
-      - "${TAILSCALE_IP:-127.0.0.1}:25565:25565"
-    environment:
-      EULA: "TRUE"
-      TYPE: PAPER
-      VERSION: "${MC_VERSION:-LATEST}"
-      MEMORY: 4G
-      MAX_PLAYERS: "3"
-      VIEW_DISTANCE: "8"
-      SIMULATION_DISTANCE: "6"
-      USE_AIKAR_FLAGS: "true"
-      ENABLE_RCON: "true"
-      RCON_PASSWORD: "${RCON_PASSWORD:?set RCON_PASSWORD in .env}"
-      # rcon-cli inside the container talks to localhost:25575; that port is NOT published.
-    volumes:
-      - /srv/orbit/minecraft-data:/data
-    # CPU priority: docker has no "nice"; cpu_shares is the cgroup CPU *weight*.
-    # Default is 1024. 2048 makes Minecraft win CPU against Syncthing (512) and
-    # the hub (256) when the VM is busy, so game ticks do not lag during syncs.
-    # Change live without restart:  docker update --cpu-shares 4096 minecraft
-    cpu_shares: 2048
-    mem_limit: 5g       # 4G heap + metaspace/native overhead
     labels:
       - "orbit.update-notify=true"
 
@@ -86,6 +55,8 @@ services:
       # Replica root mounted at the same path inside and outside the container so
       # folder paths in Syncthing equal host paths (needed for du / promote).
       - /srv/orbit:/srv/orbit
+    # Default weight is 1024. Syncthing gets a middle share so syncs do not starve other services.
+    # Change live without restart:  docker update --cpu-shares 1024 syncthing
     cpu_shares: 512
     labels:
       - "orbit.update-notify=true"

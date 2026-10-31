@@ -14,11 +14,11 @@ ExecStart=/usr/bin/node /opt/orbit/agent/orbit-agent.mjs --config /etc/orbit/age
 # Self-update: the agent replaces orbit-agent.mjs and exits; systemd brings it back on the new code.
 Restart=always
 RestartSec=5
-# Low CPU priority so the agent never competes with Minecraft.
+# Low CPU priority so the agent never competes with the main services.
 Nice=5
 StateDirectory=orbit
 Environment=NODE_ENV=production
-# Keep Node's heap modest on a 12 GB box shared with Minecraft.
+# Keep Node's heap modest on a 12 GB box shared with Immich/Syncthing.
 Environment=NODE_OPTIONS=--max-old-space-size=256
 
 [Install]

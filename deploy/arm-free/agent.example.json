@@ -18,18 +18,14 @@
       "name": "immich",
       "category": "photos",
       "containers": ["immich_"],
+      "systemdUnits": [],
       "paths": ["/srv/orbit/immich-library", "/srv/orbit/immich-db-dumps"]
     },
     {
-      "name": "minecraft",
-      "category": "minecraft",
-      "containers": ["minecraft"],
-      "paths": ["/srv/orbit/minecraft-data", "/srv/orbit/minecraft-backups"]
-    },
-    {
       "name": "orbit",
-      "category": "other",
-      "containers": ["orbit-web"],
+      "category": "services",
+      "containers": ["orbit-web", "syncthing"],
+      "systemdUnits": [],
       "paths": []
     }
   ],
@@ -38,27 +34,6 @@
     "configPath": "/srv/orbit/syncthing-config/config.xml"
   },
   "jobs": [
-    {
-      "id": "minecraft-world",
-      "name": "Minecraft world backup (30 min)",
-      "kind": "minecraft",
-      "schedule": "*/30 * * * *",
-      "command": "/opt/orbit/deploy/arm-free/scripts/mc-backup.sh",
-      "outputDir": "/srv/orbit/minecraft-backups",
-      "retention": "48 × 30-min, 14 daily",
-      "timeoutMin": 30
-    },
-    {
-      "id": "minecraft-daily",
-      "name": "Minecraft world backup (daily)",
-      "kind": "minecraft",
-      "schedule": "15 4 * * *",
-      "command": "/opt/orbit/deploy/arm-free/scripts/mc-backup.sh",
-      "args": ["--daily"],
-      "outputDir": "/srv/orbit/minecraft-backups/daily",
-      "retention": "14 daily",
-      "timeoutMin": 60
-    },
     {
       "id": "prune-dumps",
       "name": "Prune Immich DB dumps",
@@ -75,7 +50,7 @@
       "kind": "restic",
       "schedule": "0 3 * * *",
       "command": "restic",
-      "args": ["backup", "/srv/orbit/immich-db-dumps", "/srv/orbit/minecraft-backups", "/etc/orbit/agent.json", "--tag", "orbit"],
+      "args": ["backup", "/srv/orbit/immich-db-dumps", "/etc/orbit/agent.json", "--tag", "orbit"],
       "env": {
         "RESTIC_REPOSITORY": "REPLACE_e.g._b2:bucket:orbit_or_sftp:user@host:/path",
         "RESTIC_PASSWORD_FILE": "/etc/orbit/restic-password"
@@ -85,7 +60,8 @@
   ],
   "keepalive": {
     "command": "/opt/orbit/bin/NeverIdle",
-    "args": ["-c", "2h", "-m", "2", "-n", "4h"]
+    "args": ["-c", "2h", "-m", "2", "-n", "4h"],
+    "defaultEnabled": true
   },
   "promote": {
     "script": "/opt/orbit/deploy/arm-free/scripts/promote-standby.sh",

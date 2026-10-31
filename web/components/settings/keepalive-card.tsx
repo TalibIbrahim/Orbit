@@ -1,11 +1,13 @@
 "use client";
 
 import type { IdleRisk, KeepaliveState } from "@orbit/shared";
-import { HeartPulse } from "lucide-react";
+import { CheckCircle2, HeartPulse, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { OfflineBadge } from "@/components/offline-badge";
 import { ToneBadge } from "@/components/replication/tone-badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -81,6 +83,26 @@ export function KeepaliveCard({ deviceId }: { deviceId: string }) {
       </CardHeader>
       <CardContent>
         {data ? <OfflineBadge online={data.online} lastSeen={data.lastSeen} stale={data.stale} className="self-start" /> : null}
+        {ka?.supported && ka.recommended && !ka.enabled ? (
+          <Alert className="mb-3 bg-warning/10 text-warning">
+            <TriangleAlert />
+            <AlertTitle>Recommended on the standby VM</AlertTitle>
+            <AlertDescription className="text-warning/90">
+              <p>
+                Oracle may reclaim an idle Always Free instance (CPU p95, network and memory all &lt; 20% over 7 days).
+                Keep-alive runs NeverIdle at the lowest priority.
+              </p>
+              <Button size="sm" className="mt-2" disabled={busy || offline} onClick={() => void toggle(true)}>
+                Enable keep-alive
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {ka?.supported && ka.recommended && ka.enabled ? (
+          <p className="mb-3 flex items-center gap-1.5 text-sm text-success">
+            <CheckCircle2 className="size-4" /> Keep-alive is enabled; this VM is protected from idle reclamation.
+          </p>
+        ) : null}
         {loading ? (
           <Skeleton className="h-20 rounded-xl" />
         ) : !ka ? (
@@ -99,7 +121,7 @@ export function KeepaliveCard({ deviceId }: { deviceId: string }) {
         )}
         <IdleSummary deviceId={deviceId} />
         <p className="text-xs text-muted-foreground">
-          Keep-alive runs NeverIdle at lowest priority (nice 19) so Minecraft is unaffected.
+          Keep-alive runs NeverIdle at the lowest priority (nice 19), so other workloads are unaffected.
         </p>
       </CardContent>
     </Card>

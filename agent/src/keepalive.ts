@@ -18,6 +18,7 @@ export function createKeepalive(ctx: Ctx): KeepaliveApi {
   const state = (): KeepaliveState => ({
     supported: !!cfg,
     enabled,
+    recommended: ctx.config.role === "standby",
     running: !!child && child.exitCode === null && child.pid !== undefined,
     pid: child?.pid ?? null,
     since: child ? since : null,
@@ -55,9 +56,13 @@ export function createKeepalive(ctx: Ctx): KeepaliveApi {
     }
   }
 
-  if (cfg && kvGet<boolean>(ctx.db, KV)) {
-    enabled = true;
-    start();
+  if (cfg) {
+    const saved = kvGet<boolean>(ctx.db, KV);
+    if (saved === true || (saved == null && cfg.defaultEnabled === true)) {
+      enabled = true;
+      if (saved == null) kvSet(ctx.db, KV, true);
+      start();
+    }
   }
 
   return {

@@ -45,8 +45,8 @@ function collect(now: number): Cond[] {
       const ram = st.memTotal ? (st.memUsed / st.memTotal) * 100 : 0;
       if (ram >= t.ramPercent) add("ram-high", "warning", d.id, "", `Memory ${Math.round(ram)}% on ${d.name}`, `RAM use is ${ram.toFixed(1)}% (threshold ${t.ramPercent}%).`);
       for (const sv of st.services) {
-        if (sv.containersExpected > 0 && !sv.up)
-          add("service-down", "critical", d.id, sv.name, `Service down: ${sv.name} on ${d.name}`, `${sv.containersRunning}/${sv.containersExpected} containers running.`);
+        if (sv.expected > 0 && !sv.up)
+          add("service-down", "critical", d.id, sv.name, `Service down: ${sv.name} on ${d.name}`, `${sv.running}/${sv.expected} running.`);
       }
     }
     if (st?.health.agentVersion && bundle && st.health.agentVersion !== bundle.version)

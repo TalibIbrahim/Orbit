@@ -22,6 +22,7 @@ import { HttpError } from "./http.ts";
 import type { Ctx } from "./context.ts";
 import { health } from "./health.ts";
 import { sampleDocker } from "./docker.ts";
+import { sampleUnits, systemdAvailable, type UnitSample } from "./systemd.ts";
 
 const DAY = 86_400_000;
 const cpuCount = Math.max(1, os.availableParallelism());
@@ -149,30 +150,44 @@ type Base = Omit<AgentStatus, "health" | "tailscale" | "keepalive" | "services">
 let latest: Base | null = null;
 let firstTick: Promise<void> = Promise.resolve();
 
-function mapServices(ctx: Ctx, containers: ContainerStat[]) {
+function mapServices(ctx: Ctx, containers: ContainerStat[], units: Map<string, UnitSample>) {
   const services = ctx.config.services.map((s) => ({
-    name: s.name, category: s.category, cpu: 0, memUsed: 0, netRx: 0, netTx: 0, containersRunning: 0, containersExpected: 0, up: false,
+    name: s.name, category: s.category, cpu: 0, memUsed: 0, netRx: 0, netTx: 0, running: 0, expected: 0, up: false,
   }));
   for (const c of containers) {
     const idx = ctx.config.services.findIndex((s) => s.containers.some((p) => c.name.replace(/^\//, "").startsWith(p.replace(/^\//, ""))));
     if (idx === -1) continue;
     c.service = services[idx].name;
     const s = services[idx];
-    s.containersExpected++;
-    if (c.state === "running") s.containersRunning++;
+    s.expected++;
+    if (c.state === "running") s.running++;
     s.cpu += c.cpu; s.memUsed += c.memUsed; s.netRx += c.netRx; s.netTx += c.netTx;
   }
-  for (const s of services) s.up = s.containersExpected > 0 && s.containersRunning === s.containersExpected;
+  if (systemdAvailable()) {
+    ctx.config.services.forEach((cfg, i) => {
+      const s = services[i];
+      for (const u of cfg.systemdUnits) {
+        const m = units.get(u);
+        s.expected++;
+        if (!m) continue;
+        if (m.active) s.running++;
+        s.cpu += m.cpu; s.memUsed += m.memUsed; s.netRx += m.netRx; s.netTx += m.netTx;
+      }
+    });
+  }
+  for (const s of services) s.up = s.expected > 0 && s.running === s.expected;
   return services;
 }
 
 async function tick(ctx: Ctx) {
-  const [load, mem, disks, net, dock] = await Promise.all([
+  const allUnits = [...new Set(ctx.config.services.flatMap((s) => s.systemdUnits))];
+  const [load, mem, disks, net, dock, units] = await Promise.all([
     si.currentLoad(),
     si.mem(),
     listDisks(0).catch(() => diskCache?.disks ?? []),
     netRates().catch(() => ({ rx: 0, tx: 0 })),
     sampleDocker(ctx.config, cpuCount).catch(() => ({ available: false, containers: [] as ContainerStat[] })),
+    sampleUnits(allUnits, cpuCount).catch(() => new Map<string, UnitSample>()),
   ]);
   const ts = Date.now();
   const cpu = Math.min(100, Math.max(0, load.currentLoad));
@@ -180,7 +195,7 @@ async function tick(ctx: Ctx) {
   const memUsed = Math.max(0, mem.total - mem.available);
   const diskUsed = disks.reduce((a, d) => a + d.used, 0);
   const diskTotal = disks.reduce((a, d) => a + d.total, 0);
-  const services = mapServices(ctx, dock.containers);
+  const services = mapServices(ctx, dock.containers, units);
 
   ctx.db.prepare("INSERT OR REPLACE INTO samples (ts, cpu, mem_used, mem_total, net_rx, net_tx, disk_used, disk_total) VALUES (?,?,?,?,?,?,?,?)")
     .run(ts, cpu, memUsed, memTotal, net.rx, net.tx, diskUsed, diskTotal);
@@ -301,9 +316,9 @@ function storage(ctx: Ctx): StorageBreakdown {
   const provisioned = last?.disk_total ?? 0;
   const quotaBytes = ctx.config.storageQuotaGB ? ctx.config.storageQuotaGB * GB : null;
   const cat = (c: StorageCategory) =>
-    ctx.config.services.filter((s) => s.category === c).reduce((a, s) => a + (latestSize(ctx, `service:${s.name}`) ?? 0), 0);
+    ctx.config.services.filter((s) => (c === "photos") === (s.category === "photos")).reduce((a, s) => a + (latestSize(ctx, `service:${s.name}`) ?? 0), 0);
   const photos = cat("photos");
-  const minecraft = cat("minecraft");
+  const services = cat("services");
   const pts = (ctx.db.prepare("SELECT ts, disk_used AS bytes FROM samples WHERE ts >= ? ORDER BY ts").all(Date.now() - 7 * DAY) as { ts: number; bytes: number }[]);
   const growth = linearGrowthPerDay(pts);
   const cap = quotaBytes ?? provisioned;
@@ -314,8 +329,8 @@ function storage(ctx: Ctx): StorageBreakdown {
     usedBytes: used,
     categories: [
       { category: "photos", label: "Photos", bytes: photos },
-      { category: "minecraft", label: "Minecraft", bytes: minecraft },
-      { category: "other", label: "Other", bytes: Math.max(0, used - photos - minecraft) },
+      { category: "services", label: "Services", bytes: services },
+      { category: "system", label: "System", bytes: Math.max(0, used - photos - services) },
     ],
     growthBytesPerDay: growth,
     daysUntilFull: growth != null && growth > 0 && cap > 0 ? Math.max(0, (cap - used) / growth) : null,

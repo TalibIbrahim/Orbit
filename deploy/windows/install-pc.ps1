@@ -135,7 +135,7 @@ if (-not (Test-Path $cfgPath)) {
     retentionDays = 35
     autoUpdate = $true
     services = @(
-      [ordered]@{ name = "immich"; category = "photos"; containers = @("immich_"); paths = @($LibraryPath) }
+      [ordered]@{ name = "immich"; category = "photos"; containers = @("immich_"); systemdUnits = @(); paths = @($LibraryPath) }
     )
     syncthing = [ordered]@{ url = "http://127.0.0.1:8384"; configPath = $syncCfg }
     jobs = @(

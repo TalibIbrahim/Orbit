@@ -11,7 +11,7 @@ Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It wa
  | full library, source of  | -----------> |   immich-library, immich-db-dumps              |
  | truth                    |  immich-     | Orbit hub :3000  <-- polls every agent /60 s   |
  | daily Postgres dump 02:30|  library     | Orbit agent :7420 (systemd, host)              |
- | Orbit agent :7420        |  immich-db-  | Paper Minecraft (cpu_shares 2048)              |
+ | Orbit agent :7420        |  immich-db-  | Your own services (optional, tracked)         |
  +--------------------------+  dumps       | Immich standby stack (started ONLY by Promote) |
                                            +------------------------------------------------+
  Extra replicas (Linux/Windows) are added with Devices -> Add device and receive the same folders.
@@ -43,13 +43,13 @@ Pages: Overview, Usage, Folders, Devices (bottom bar); Replication, Backups, Set
 
 | Feature | What it does |
 |---|---|
-| Usage tracker | Per-device CPU, RAM, network, disk, per-service (Immich, Minecraft, Orbit) charts for 1 h / 24 h / 7 d / 30 d. Agents keep 35 days of samples. |
+| Usage tracker | Per-device CPU, RAM, network, disk, per-service (Immich, Orbit and any service you add) charts for 1 h / 24 h / 7 d / 30 d. Agents keep 35 days of samples. |
 | Idle-risk meter | Compares 7-day CPU p95, network and memory against Oracle's reclamation thresholds (all three under 20% = at risk). See [section 10](#10-keep-alive-and-idle-risk-meter). |
-| Storage quota | Used vs the 200 GB Oracle allowance (`storageQuotaGB`), split photos / Minecraft / other, growth per day and days until full. |
+| Storage quota | Used vs the 200 GB Oracle allowance (`storageQuotaGB`), split Photos / Services / System, growth per day and days until full. |
 | Folder limits | Per-folder size limit with three enforcement modes: `alert`, `pause-sync`, `hard`. See [section 7](#7-folder-storage-limits). |
 | Devices / Add device | Wizard creates a device and token and shows a one-line install command. Agents enroll themselves and the hub pairs Syncthing. |
 | Replication health | Per replica and folder: up to date / syncing / offline, completion, lag, versioning type. |
-| Backups | Job cards (Immich dump, Minecraft, restic, prune) with last run, next run, output size, "Run backup now". |
+| Backups | Job cards (Immich dump, restic, prune, your own commands) with last run, next run, output size, "Run backup now". |
 | Promote standby | One button (Settings -> Standby) starts Immich on arm-free from the latest dump. Switch-back instructions on the same tab. |
 | Keep-alive | Toggle that runs NeverIdle on arm-free to avoid Oracle idle reclamation. |
 | LAN mode | The Immich link picks the LAN URL at home, the Tailscale URL away, or the standby URL after a promote. |
@@ -57,6 +57,28 @@ Pages: Overview, Usage, Folders, Devices (bottom bar); Replication, Backups, Set
 | Auto-updates | Containers via a daily systemd timer; agents self-update from the hub. |
 
 How the hub works: it polls every agent every 60 s and caches the last good response in SQLite, so an offline device shows "offline, last seen X" instead of errors. Alerts go to a Discord webhook and/or SMTP email (Settings -> Alerts): replica more than 24 h behind, PC offline more than 3 days, disk over 80%, RAM over 90%, service down, idle risk, folder limit, failed backup.
+
+### Tracking your own services
+
+Per-service charts and the disk split come from the `services` list in `agent.json`. Add any Docker container or systemd unit; no code changes needed, restart the agent afterwards (`sudo systemctl restart orbit-agent`).
+
+| Field | Meaning |
+|---|---|
+| `name` | Label in charts. |
+| `category` | `photos` or `services` (default `services`). |
+| `containers` | Docker container name prefixes (`"nextcloud"` matches `nextcloud-app-1`). |
+| `systemdUnits` | Linux unit names (Linux agents only). |
+| `paths` | Directories whose size counts as this service's disk usage. |
+
+```json
+"services": [
+  { "name": "immich", "category": "photos", "containers": ["immich_"], "systemdUnits": [], "paths": ["/srv/orbit/immich-library"] },
+  { "name": "nextcloud", "category": "services", "containers": ["nextcloud"], "systemdUnits": [], "paths": ["/srv/nextcloud"] },
+  { "name": "game-server", "category": "services", "containers": [], "systemdUnits": ["gameserver.service"], "paths": ["/srv/gameserver"] }
+]
+```
+
+Measured: containers report CPU, RAM and network; systemd units report CPU and RAM, and network only if the unit has `IPAccounting=yes` (`systemctl edit <unit>`, add `[Service]` / `IPAccounting=yes`). Disk usage comes only from `paths`. The Storage quota view splits usage into **Photos** (services in the photos category), **Services** (everything else you track) and **System** (the rest of the disk).
 
 ## 2. Set up arm-free
 
@@ -104,7 +126,7 @@ The installer is idempotent and never overwrites existing config. Optional envir
 | `SKIP_START=1` | Install units and files but do not start the agent, timer or compose stack. |
 | `ORBIT_ROOT` (via lib.sh) | Data root, default `/srv/orbit`. The shipped agent config and compose files hardcode `/srv/orbit`, so leave it. |
 
-It installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit/bin/NeverIdle`), creates `/srv/orbit/{immich-library,immich-db-dumps,minecraft-backups/{30min,daily},immich-standby-db,minecraft-data,syncthing-config,orbit-data,replicas}`, symlinks `/opt/orbit/deploy` to the repo, writes `/etc/orbit/agent.json` (mode 640, group 1000), installs `orbit-agent.service`, `orbit-update.service` and `orbit-update.timer`, and runs `docker compose up -d --build` when Tailscale is up.
+It installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit/bin/NeverIdle`), creates `/srv/orbit/{immich-library,immich-db-dumps,immich-standby-db,syncthing-config,orbit-data,replicas}`, symlinks `/opt/orbit/deploy` to the repo, writes `/etc/orbit/agent.json` (mode 640, group 1000), installs `orbit-agent.service`, `orbit-update.service` and `orbit-update.timer`, and runs `docker compose up -d --build` when Tailscale is up.
 
 ### 2.4 Review the .env files
 
@@ -112,12 +134,10 @@ It installs Docker, Tailscale, Node 22, restic, zstd, jq, NeverIdle (`/opt/orbit
 
 | Key | Meaning |
 |---|---|
-| `TAILSCALE_IP` | Output of `tailscale ip -4`. Hub (3000) and Minecraft (25565) bind to it. |
+| `TAILSCALE_IP` | Output of `tailscale ip -4`. The hub (3000) binds to it. |
 | `ORBIT_HUB_URL` | URL other devices use to reach the hub. |
-| `RCON_PASSWORD` | Generated by the installer (`openssl rand -hex 16`). Used by `mc-backup.sh` via `docker exec ... rcon-cli`. The RCON port is not published. |
 | `ORBIT_PASSWORD` | Optional dashboard password. Empty = rely on Tailscale ACLs. |
 | `DISCORD_WEBHOOK_URL` | Optional; hub alerts and `update.sh` notifications. |
-| `MC_VERSION` | Optional Minecraft version pin (default `LATEST`). |
 
 `deploy/arm-free/immich-standby/.env`: see [section 5](#5-immich-syncthing-and-restic).
 
@@ -129,9 +149,9 @@ Browse to `http://arm-free.<tailnet>.ts.net:3000` from any device on your tailne
 
 Syncthing GUI is loopback-only: `ssh -L 8384:127.0.0.1:8384 ubuntu@arm-free`, then open `http://127.0.0.1:8384`. Normally you never need it, the hub pairs folders.
 
-### 2.6 Minecraft
+### 2.6 First run
 
-Paper, 4 GB heap (container limit 5 GB), max 3 players, view distance 8. Connect with the Minecraft client to `arm-free.<tailnet>.ts.net:25565` (every player must be on your tailnet or be shared the node). Console: `docker exec -i minecraft rcon-cli`. Raise CPU priority live: `docker update --cpu-shares 4096 minecraft`.
+Open Overview: the **Getting started** checklist walks through the first steps (add the PC, pair folders, enable keep-alive, set up alerts). The keep-alive step is marked **Recommended**: a fresh arm-free mostly idles, so see [section 10](#10-keep-alive-and-idle-risk-meter) and Settings -> Standby.
 
 ## 3. Set up the PC
 
@@ -187,7 +207,7 @@ The installer only opens 7420. Docker Desktop publishes 2283 on all interfaces, 
 
 ## 4. Tailscale notes
 
-- Enable MagicDNS in the admin console. Use `arm-free.<tailnet>.ts.net` and `<pc>.<tailnet>.ts.net` everywhere (hub URL, Immich external URL, Minecraft).
+- Enable MagicDNS in the admin console. Use `arm-free.<tailnet>.ts.net` and `<pc>.<tailnet>.ts.net` everywhere (hub URL, Immich external URL).
 - Disable key expiry for arm-free and the PC (Machines -> ... -> Disable key expiry), otherwise an expired key silently takes the standby offline.
 - Suggested ACL (tag the servers, allow your user devices to reach them, and let servers talk to each other for Syncthing and the hub):
 
@@ -195,7 +215,7 @@ The installer only opens 7420. Docker Desktop publishes 2283 on all interfaces, 
 {
   "tagOwners": { "tag:orbit": ["autogroup:admin"] },
   "acls": [
-    { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:orbit:3000,2283,25565,22"] },
+    { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:orbit:3000,2283,22"] },
     { "action": "accept", "src": ["tag:orbit"], "dst": ["tag:orbit:3000,7420,22000,2283"] }
   ],
   "ssh": [
@@ -230,7 +250,7 @@ The standby has no machine-learning container. After promoting, also disable ML 
 
 ### restic
 
-The `restic` job in `/etc/orbit/agent.json` runs daily at 03:00 on arm-free: `restic backup /srv/orbit/minecraft-backups /etc/orbit --tag orbit`. Note `/etc/orbit` contains the agent token and the restic password file, so store that password in your password manager too. Set it up:
+The `restic` job in `/etc/orbit/agent.json` runs daily at 03:00 on arm-free: `restic backup /srv/orbit/immich-db-dumps /etc/orbit/agent.json --tag orbit`. Note `agent.json` contains the agent token and the restic password file lives in `/etc/orbit`, so store that password in your password manager too. Set it up:
 
 ```bash
 sudo sh -c 'openssl rand -hex 24 > /etc/orbit/restic-password && chmod 600 /etc/orbit/restic-password'
@@ -240,7 +260,7 @@ sudo systemctl restart orbit-agent
 sudo RESTIC_REPOSITORY=<repo> RESTIC_PASSWORD_FILE=/etc/orbit/restic-password restic init
 ```
 
-Add more paths (for example `/srv/orbit/immich-db-dumps`) to the job `args` if you want them offsite. The default config does not back up the photo library itself offsite.
+Add more paths (for example your own app backups) to the job `args` if you want them offsite. The default config does not back up the photo library itself offsite.
 
 ## 6. iPhone setup
 
@@ -264,13 +284,13 @@ Folders -> add a folder (device, path, limit, mode). Usage is measured every `si
 **Important:** in the agent, `hard` currently only alerts when the limit is reached (see `agent/src/folders.ts`); the actual cap comes from the volume you create with the script:
 
 ```bash
-sudo /opt/orbit/deploy/arm-free/scripts/make-capped-folder.sh /srv/orbit/minecraft-backups 30            # empty or new path
-sudo /opt/orbit/deploy/arm-free/scripts/make-capped-folder.sh /srv/orbit/minecraft-backups 30 --migrate  # path has data: stop writers first
+sudo /opt/orbit/deploy/arm-free/scripts/make-capped-folder.sh /srv/orbit/app-backups 20            # empty or new path
+sudo /opt/orbit/deploy/arm-free/scripts/make-capped-folder.sh /srv/orbit/app-backups 20 --migrate  # path has data: stop writers first
 ```
 
 It fallocates `/srv/orbit/.capped/<name>.img`, formats ext4 (`-m 0`), adds `<img> <path> ext4 loop,nofail,noatime 0 0` to `/etc/fstab` and mounts it. The old directory is kept as `<path>.premigrate-<pid>`; delete it after checking. The space is reserved immediately.
 
-Alternative without image files: **project quotas**. XFS: mount with `prjquota`, then `echo "42:/srv/orbit/minecraft-backups" >> /etc/projects; echo "mcb:42" >> /etc/projid; xfs_quota -x -c 'project -s mcb' /srv; xfs_quota -x -c 'limit -p bhard=30g mcb' /srv`. ext4: `tune2fs -O project,quota /dev/XXX`, mount with `prjquota`, `chattr -p 42 +P <dir>`, `setquota -P 42 0 30G 0 0 /srv`. The Oracle boot volume usually has neither option, which is why the loopback approach is the default.
+Alternative without image files: **project quotas**. XFS: mount with `prjquota`, then `echo "42:/srv/orbit/app-backups" >> /etc/projects; echo "apb:42" >> /etc/projid; xfs_quota -x -c 'project -s apb' /srv; xfs_quota -x -c 'limit -p bhard=20g apb' /srv`. ext4: `tune2fs -O project,quota /dev/XXX`, mount with `prjquota`, `chattr -p 42 +P <dir>`, `setquota -P 42 0 30G 0 0 /srv`. The Oracle boot volume usually has neither option, which is why the loopback approach is the default.
 
 **Overcommit warning:** the Folders page flags a volume as overcommitted when the sum of limits minus current usage of limited folders exceeds free space. Loopback caps are allocated up front, so the sum of all caps must fit in the 200 GB allowance (boot + block).
 
@@ -280,11 +300,39 @@ Alternative without image files: **project quotas**. XFS: mount with `prjquota`,
 |---|---|---|---|
 | Immich DB dump (`immich-db`) | PC, `immich-db-dump.ps1` | `30 2 * * *` | last 14 dumps (script) |
 | Prune Immich DB dumps (`prune-dumps`) | arm-free | `45 4 * * *` | last 14 (`KEEP_DUMPS`) |
-| Minecraft world (`minecraft-world`) | arm-free, `mc-backup.sh` | `*/30 * * * *` | 48 archives (`MC_KEEP_30MIN`) in `/srv/orbit/minecraft-backups/30min` |
-| Minecraft daily (`minecraft-daily`) | arm-free, `mc-backup.sh --daily` | `15 4 * * *` | 14 (`MC_KEEP_DAILY`) in `.../daily` |
 | Restic (`restic`) | arm-free | `0 3 * * *` | per your repo |
 
-`mc-backup.sh`: `rcon-cli save-off` + `save-all flush`, `tar | zstd` of `world world_nether world_the_end`, verify the archive, `save-on` (always restored by a trap), prune. It refuses to run below 2 GB free (`MC_MIN_FREE_GB`). Overrides: `MC_CONTAINER`, `MC_DATA_DIR`, `MC_BACKUP_ROOT`, `MC_WORLDS`.
+### Backup jobs
+
+Jobs live in the `jobs` array of `agent.json`; add your own without code changes. Each entry:
+
+| Field | Meaning |
+|---|---|
+| `id` | Unique, stable id (used by `POST /v1/backups/:job/run`). |
+| `name` | Label on the Backups card. |
+| `kind` | `pgdump` (Immich database dump on the PC), `restic` (offsite repository), or `command` (any program). |
+| `schedule` | Cron expression (5 fields). |
+| `command`, `args` | Executable and its arguments (no shell; wrap pipes in a script). |
+| `env` | Extra environment variables (for example `RESTIC_REPOSITORY`). |
+| `outputDir` | Folder the job writes to; the card shows its size and newest file. |
+| `retention` | Free-text label shown on the card (your script does the pruning). |
+| `timeoutMin` | Kill the job after this many minutes. |
+
+`pgdump` and `restic` are the built-in kinds shipped in the example configs (the Immich dump on the PC, offsite restic on arm-free). Example custom job: a nightly tarball of an app's data directory, made by your own script:
+
+```json
+{
+  "id": "app-data",
+  "name": "App data tarball",
+  "kind": "command",
+  "schedule": "30 3 * * *",
+  "command": "/usr/local/bin/backup-app.sh",
+  "args": ["/srv/myapp/data", "/srv/orbit/app-backups"],
+  "outputDir": "/srv/orbit/app-backups",
+  "retention": "last 7 archives",
+  "timeoutMin": 30
+}
+```
 
 Backups page (or `POST /v1/backups/:job/run` on the agent): **Run backup now** on any job card.
 
@@ -310,13 +358,13 @@ The full step lists, a restore-test checklist (dump restore, restic, Syncthing v
 
 Oracle may reclaim an Always Free A1 instance when, over 7 days, CPU p95 is under 20%, network under 20% **and** memory under 20% (all three). The Usage page shows each metric against its threshold; "at risk" appears only when all three are below. The meter needs history: coverage is low for the first week, so do not trust it before about 7 days of samples.
 
-Keep-alive is the `keepalive` block in `/etc/orbit/agent.json`: `/opt/orbit/bin/NeverIdle -c 2h -m 2 -n 4h` (downloaded by the installer; see the NeverIdle README for flag meanings). The agent spawns it at nice 19, restarts it after 30 s if it dies, and remembers the toggle. Enable it in Settings -> Standby (Keep-alive card). It is off until you switch it on.
+A fresh arm-free mostly idles: the Immich standby stack only runs after a promote, so Syncthing and the hub use little CPU, memory and network. Expect the meter to show **at risk** until you add load or keep-alive.
 
-Minecraft's 4 GB heap is about 33% of 12 GB, so while the server is running memory stays above the 20% line by itself; the network percentage is computed against `networkBandwidthMbps` (2000 in the example config).
+Keep-alive is the `keepalive` block in `/etc/orbit/agent.json`: `/opt/orbit/bin/NeverIdle -c 2h -m 2 -n 4h` (downloaded by the installer; see the NeverIdle README for flag meanings). The agent spawns it at nice 19, restarts it after 30 s if it dies, and remembers the toggle. With `"defaultEnabled": true` (the shipped arm-free config) the agent turns it on at first boot unless you switched it off. It is recommended on the standby: manage it in Settings -> Standby (Keep-alive card), and the Overview **Getting started** checklist links to it. The network percentage is computed against `networkBandwidthMbps` (2000 in the example config).
 
 ## 11. Auto-updates
 
-- **Containers:** `orbit-update.timer` runs `scripts/update.sh` daily at 04:30 (random delay up to 30 min). It pulls the main stack (Minecraft `latest`, Syncthing `2`), recreates changed services, updates the Immich standby stack only if it is running, prunes images and posts changed images (or failures) to `DISCORD_WEBHOOK_URL`. Optional overrides go in `/etc/orbit/update.env` (`DISCORD_WEBHOOK_URL=...`, `ORBIT_AUTO_BUILD=1`). The `orbit-web` image is built locally, so it is rebuilt only with `ORBIT_AUTO_BUILD=1`, or manually after `git pull`: `cd /opt/orbit-src/deploy/arm-free && docker compose up -d --build`. Check: `systemctl list-timers orbit-update.timer`, `journalctl -u orbit-update`.
+- **Containers:** `orbit-update.timer` runs `scripts/update.sh` daily at 04:30 (random delay up to 30 min). It pulls the main stack (Syncthing `2`, plus the locally built hub), recreates changed services, updates the Immich standby stack only if it is running, prunes images and posts changed images (or failures) to `DISCORD_WEBHOOK_URL`. Optional overrides go in `/etc/orbit/update.env` (`DISCORD_WEBHOOK_URL=...`, `ORBIT_AUTO_BUILD=1`). The `orbit-web` image is built locally, so it is rebuilt only with `ORBIT_AUTO_BUILD=1`, or manually after `git pull`: `cd /opt/orbit-src/deploy/arm-free && docker compose up -d --build`. Check: `systemctl list-timers orbit-update.timer`, `journalctl -u orbit-update`.
 - **Immich** is pinned to the major (`IMMICH_VERSION=v3`), so only minor/patch updates arrive. To move to a new major: read its release notes, update the PC first (`IMMICH_VERSION` in `C:\Immich\.env`, `docker compose pull; docker compose up -d`), let a fresh dump sync, then set the same value and the new `IMMICH_POSTGRES_IMAGE`/valkey tags in `immich-standby/.env` and compose, and rehearse a promote ([restore test](docs/failover-restore.md)).
 - **Agents** self-update: they poll `GET /api/agent/version` on the hub (version + sha256), download `/agent/orbit-agent.mjs`, replace the bundle and exit; systemd (`Restart=always`) or the Windows runner restarts them. Rebuilding the hub image ships new agents to every device (`docker compose up -d --build`).
 - **Windows:** scheduled task `Orbit Agent` runs `orbit-agent-runner.ps1`, a loop that restarts the agent 5 s after it exits (log `C:\ProgramData\Orbit\logs\agent.log`, 10 MB rotation). Docker Desktop and Tailscale update themselves; Syncthing is installed by winget (`winget upgrade Syncthing.Syncthing`).
@@ -367,11 +415,11 @@ Hub environment: `ORBIT_DATA_DIR`, `ORBIT_HUB_URL`, `ORBIT_PASSWORD`, `DISCORD_W
 
 ## 13. Security notes
 
-- Nothing is exposed publicly. The hub, agent, Minecraft and Immich standby bind to the Tailscale IP; Syncthing's GUI is `127.0.0.1:8384`; RCON is not published. Windows opens 7420 only for `100.64.0.0/10`.
+- Nothing is exposed publicly. The hub, agent and Immich standby bind to the Tailscale IP; Syncthing's GUI is `127.0.0.1:8384`. Windows opens 7420 only for `100.64.0.0/10`.
 - Each device has a random Bearer token (shown once in the wizard, stored in `agent.json`: mode 640/600 on Linux, SYSTEM+Administrators on Windows). Install tokens are single use (the install URL returns 410 once enrolled). The install scripts embed the token and an optional Tailscale auth key; do not paste those URLs into chat.
 - The Linux agent on arm-free **runs as root** because it needs the Docker socket (container stats, promote) and `du` across folders owned by different users. A compromised agent is root, so keep it tailnet-only and the token secret. Replicas installed by the wizard run the agent as a systemd service with the default user (root) too.
 - `ORBIT_PASSWORD` adds a login page (cookie) to the dashboard and API. `/api/enroll`, `/api/agent/version`, `/agent/*` and `/install/*` stay open so agents can enroll and update. Use it if other people share your tailnet.
-- Use the Tailscale ACL in [section 4](#4-tailscale-notes) to limit who can reach ports 3000/2283/25565.
+- Use the Tailscale ACL in [section 4](#4-tailscale-notes) to limit who can reach ports 3000/2283.
 
 ## 14. Troubleshooting
 
@@ -383,7 +431,6 @@ Hub environment: `ORBIT_DATA_DIR`, `ORBIT_HUB_URL`, `ORBIT_PASSWORD`, `DISCORD_W
 | Pairing never happens | The PC must be online with Syncthing running (it starts at logon). The hub retries on each poll. Enroll from the device's own agent; check `docker logs orbit-web`. |
 | Idle-risk coverage low | Normal during the first week: the meter needs 7 days of samples. |
 | Promote fails at restore | `IMMICH_POSTGRES_IMAGE` or `DB_*` differ from the PC; see `docker logs immich_postgres`. |
-| `docker compose` complains `RCON_PASSWORD` | Set it in `deploy/arm-free/.env`. |
 
 ## Verified facts (Oct 2026)
 

@@ -77,12 +77,11 @@ fi
 
 # --- directories -------------------------------------------------------------------------
 log "creating ${ORBIT_ROOT} layout"
-mkdir -p "${ORBIT_ROOT}"/{immich-library,immich-db-dumps,minecraft-backups/30min,minecraft-backups/daily,immich-standby-db} \
-         "${ORBIT_ROOT}"/{minecraft-data,syncthing-config,orbit-data,replicas} \
+mkdir -p "${ORBIT_ROOT}"/{immich-library,immich-db-dumps,immich-standby-db} \
+         "${ORBIT_ROOT}"/{syncthing-config,orbit-data,replicas} \
          /etc/orbit /var/lib/orbit "${OPT}/agent" "${OPT}/bin"
-# Syncthing (uid 1000), the hub image (node, uid 1000) and Minecraft (itzg, uid 1000) share ownership.
-chown 1000:1000 "${ORBIT_ROOT}"/{immich-library,immich-db-dumps,minecraft-backups,minecraft-data,syncthing-config,orbit-data,replicas}
-chown -R 1000:1000 "${ORBIT_ROOT}/minecraft-backups"
+# Syncthing (uid 1000) and the hub image (node, uid 1000) share ownership.
+chown 1000:1000 "${ORBIT_ROOT}"/{immich-library,immich-db-dumps,syncthing-config,orbit-data,replicas}
 chmod 700 /etc/orbit
 ln -sfn "${REPO_DIR}/deploy" "${OPT}/deploy"
 chmod +x "${ARM_FREE_DIR}"/scripts/*.sh
@@ -90,8 +89,6 @@ chmod +x "${ARM_FREE_DIR}"/scripts/*.sh
 # --- .env for the compose stacks ---------------------------------------------------------
 if [ ! -f "${ARM_FREE_DIR}/.env" ]; then
   cp "${ARM_FREE_DIR}/.env.example" "${ARM_FREE_DIR}/.env"
-  RCON_PW="$(openssl rand -hex 16)"
-  sed -i "s|^RCON_PASSWORD=.*|RCON_PASSWORD=${RCON_PW}|" "${ARM_FREE_DIR}/.env"
   [ -n "$TS_IP" ] && sed -i "s|^TAILSCALE_IP=.*|TAILSCALE_IP=${TS_IP}|" "${ARM_FREE_DIR}/.env"
   [ -n "${ORBIT_HUB_URL:-}" ] && sed -i "s|^ORBIT_HUB_URL=.*|ORBIT_HUB_URL=${ORBIT_HUB_URL}|" "${ARM_FREE_DIR}/.env"
   chmod 600 "${ARM_FREE_DIR}/.env"
@@ -168,7 +165,7 @@ if [ "${SKIP_START:-0}" != "1" ]; then
   systemctl restart orbit-agent.service
   systemctl start orbit-update.timer
   if [ -n "$TS_IP" ]; then
-    log "starting the main stack (hub, minecraft, syncthing)"
+    log "starting the main stack (hub, syncthing)"
     (cd "$ARM_FREE_DIR" && docker compose up -d --build)
   else
     warn "Tailscale not up yet; start the stack later: cd ${ARM_FREE_DIR} && docker compose up -d --build"

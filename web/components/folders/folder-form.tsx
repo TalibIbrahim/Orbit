@@ -26,7 +26,7 @@ import { useAgent } from "@/lib/hooks";
 
 const PRESETS = [
   { label: "Immich replica · 150 GB", name: "Immich replica", gb: 150 },
-  { label: "Minecraft backups · 20 GB", name: "Minecraft backups", gb: 20 },
+  { label: "App backups · 20 GB", name: "App backups", gb: 20 },
 ];
 
 const MODES: { value: EnforcementMode; title: string; desc: string }[] = [

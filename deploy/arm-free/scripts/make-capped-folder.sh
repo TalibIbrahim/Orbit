@@ -5,7 +5,7 @@
 #
 # How: a sparse-free (fallocate) image file /srv/orbit/.capped/<name>.img is formatted
 # ext4 (-m 0: no reserved blocks) and loop-mounted on <path> via /etc/fstab
-# (loop,nofail). Writes beyond <sizeGB> fail with ENOSPC, so Syncthing/Immich/Minecraft
+# (loop,nofail). Writes beyond <sizeGB> fail with ENOSPC, so Syncthing/Immich/your apps
 # cannot overrun the quota. The space is reserved up front (fallocate), so make sure
 # the sum of all caps fits the 200 GB Oracle volume.
 #
@@ -14,7 +14,7 @@
 #
 # ALTERNATIVE (no image file, more flexible, but needs a filesystem mounted with the
 # right option): project quotas.
-#   XFS : mount with `prjquota`; echo "42:/srv/orbit/minecraft-backups" >> /etc/projects;
+#   XFS : mount with `prjquota`; echo "42:/srv/orbit/app-backups" >> /etc/projects;
 #         echo "mcb:42" >> /etc/projid; xfs_quota -x -c 'project -s mcb' /srv;
 #         xfs_quota -x -c 'limit -p bhard=30g mcb' /srv
 #   ext4: `tune2fs -O project,quota /dev/XXX`, mount with `prjquota`,

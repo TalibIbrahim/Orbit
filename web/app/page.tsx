@@ -3,6 +3,7 @@
 import type { AlertsResponse, IdleRisk, ReplicationHealth, StorageBreakdown } from "@orbit/shared";
 import { ImmichLink } from "@/components/immich-link";
 import { AlertsCard } from "@/components/overview/alerts-card";
+import { GettingStartedCard } from "@/components/overview/getting-started-card";
 import { DeviceTile } from "@/components/overview/device-tile";
 import { ReplicationCard } from "@/components/overview/replication-card";
 import { PageHeader } from "@/components/page-header";
@@ -22,6 +23,7 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeader title="Overview" description="Everything at a glance" actions={<ImmichLink />} />
+      <GettingStartedCard devices={devices.data} replication={replication.data} />
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {devices.loading ? (
           <>

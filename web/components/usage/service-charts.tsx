@@ -77,7 +77,7 @@ export function ServiceTable({ services }: { services: AgentStatus["services"] }
                   <TableCell className="font-medium">{s.name}</TableCell>
                   <TableCell>
                     <Badge variant={s.up ? "secondary" : "destructive"}>
-                      {s.up ? "Up" : "Down"} {s.containersRunning}/{s.containersExpected}
+                      {s.up ? "Up" : "Down"} {s.running}/{s.expected}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatPercent(s.cpu)}</TableCell>

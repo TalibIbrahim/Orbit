@@ -1,22 +1,24 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import os from "node:os";
-import type { DeviceRole, JobKind, StorageCategory } from "@orbit/shared";
+import type { DeviceRole, JobKind, ServiceCategory } from "@orbit/shared";
 import { DEFAULT_AGENT_PORT } from "@orbit/shared";
 
+// Any workload the user wants tracked; add entries to agent.json, no code changes needed.
 export interface ServiceConfig {
-  name: string; // "immich", "minecraft"
-  category: StorageCategory;
-  containers: string[]; // container name prefixes, e.g. ["immich_"] or ["minecraft"]
+  name: string; // "immich", "nextcloud", "game-server", ...
+  category: ServiceCategory; // "photos" | "services" (default "services")
+  containers: string[]; // Docker container name prefixes, e.g. ["immich_"]
+  systemdUnits: string[]; // Linux systemd units, e.g. ["nextcloud-cron.service"]
   paths: string[]; // directories whose size counts as this service's disk usage
 }
 
 export interface JobConfig {
-  id: string; // "immich-db", "restic", "minecraft-world"
+  id: string; // "immich-db", "restic", "app-backup"
   name: string;
   kind: JobKind;
   schedule?: string; // cron expression (croner syntax), omitted = manual only
-  command: string; // executable, e.g. "/opt/orbit/scripts/mc-backup.sh" or "powershell.exe"
+  command: string; // executable, e.g. "/usr/local/bin/backup-app.sh" or "powershell.exe"
   args?: string[];
   cwd?: string;
   env?: Record<string, string>; // e.g. RESTIC_REPOSITORY / RESTIC_PASSWORD_FILE for kind=restic
@@ -42,7 +44,7 @@ export interface AgentConfig {
   services: ServiceConfig[];
   syncthing?: { url?: string; apiKey?: string; configPath?: string }; // apiKey read from config.xml if omitted
   jobs: JobConfig[];
-  keepalive?: { command: string; args?: string[] };
+  keepalive?: { command: string; args?: string[]; defaultEnabled?: boolean }; // defaultEnabled: on until the user turns it off
   promote?: { script: string; args?: string[]; immichUrl: string; dumpDir?: string };
   autoUpdate: boolean; // poll hub for new agent bundles
 }
@@ -82,7 +84,13 @@ export function loadConfig(path = configPathFromArgv()): AgentConfig {
     networkBandwidthMbps: raw.networkBandwidthMbps,
     storageQuotaGB: raw.storageQuotaGB,
     docker: raw.docker,
-    services: raw.services ?? [],
+    services: (raw.services ?? []).map((s) => ({
+      name: s.name,
+      category: s.category === "photos" ? "photos" : "services",
+      containers: s.containers ?? [],
+      systemdUnits: s.systemdUnits ?? [],
+      paths: s.paths ?? [],
+    })),
     syncthing: raw.syncthing,
     jobs: raw.jobs ?? [],
     keepalive: raw.keepalive,

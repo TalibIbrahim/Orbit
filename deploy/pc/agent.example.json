@@ -15,6 +15,7 @@
       "name": "immich",
       "category": "photos",
       "containers": ["immich_"],
+      "systemdUnits": [],
       "paths": ["D:\\Immich\\library"]
     }
   ],
