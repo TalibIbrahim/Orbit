@@ -1,11 +1,12 @@
 import { configPathFromArgv, loadConfig } from "./config.ts";
-import { openDb, pruneOld } from "./db.ts";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { kvGet, openDb, pruneOld } from "./db.ts";
 import { Router, startServer } from "./http.ts";
 import { AGENT_VERSION, type Ctx } from "./context.ts";
 import { health } from "./health.ts";
 
 // Module A — system metrics, storage, folder limits
-import { startSampler, registerMetricsRoutes } from "./metrics.ts";
+import { startSampler, registerMetricsRoutes, lastSampleTs } from "./metrics.ts";
 import { startSizer } from "./sizes.ts";
 import { startFolderEnforcer, registerFolderRoutes } from "./folders.ts";
 import { createTailscale } from "./tailscale.ts";
@@ -49,6 +50,28 @@ async function main() {
   enrollWithHub(ctx).catch((e) => console.warn("[enroll]", e?.message ?? e));
 
   console.log(`[orbit-agent] ${AGENT_VERSION} device=${config.deviceId} role=${config.role}`);
+
+  const loop = monitorEventLoopDelay({ resolution: 20 });
+  loop.enable();
+  const heartbeat = async () => {
+    try {
+      const m = process.memoryUsage();
+      const ts = lastSampleTs();
+      const st = await ctx.syncthing.summary().then((x) => (x.available ? "ok" : "error"), () => "error");
+      const enroll = kvGet<{ ok?: boolean }>(db, "enroll");
+      const p99 = loop.count ? Math.round(loop.percentile(99) / 1e6) : 0;
+      loop.reset();
+      console.log(
+        `[heartbeat] up ${Math.round(process.uptime())}s rss=${Math.round(m.rss / 1048576)}MB heap=${Math.round(m.heapUsed / 1048576)}MB ` +
+          `lastSample=${ts ? Math.round((Date.now() - ts) / 1000) : "none"}s loopDelayP99=${p99}ms syncthing=${st} ` +
+          `enroll=${enroll ? (enroll.ok ? "ok" : "failed") : "none"}`,
+      );
+    } catch (e) {
+      console.warn("[heartbeat]", (e as Error)?.message ?? e);
+    }
+  };
+  setTimeout(() => void heartbeat(), 60_000).unref();
+  setInterval(() => void heartbeat(), 600_000).unref();
 
   const shutdown = () => {
     ctx.keepalive.stop();

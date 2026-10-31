@@ -24,7 +24,7 @@ export async function enrollWithHub(ctx: Ctx): Promise<void> {
   const tokenHash = createHash("sha256").update(config.token).digest("hex").slice(0, 12);
   const url = `${config.hubUrl}/api/enroll`;
 
-  const attempt = async (n: number): Promise<{ ok: boolean; fatal?: boolean }> => {
+  const attempt = async (n: number): Promise<{ ok: boolean }> => {
     let agentUrl = "?";
     try {
       const h = config.listen.host;
@@ -79,8 +79,21 @@ export async function enrollWithHub(ctx: Ctx): Promise<void> {
 
   // Backoff: 30 s, 1, 2, 4, 8 min, then every 10 min - forever (the hub may come back / the device be re-added).
   let n = 1;
+  const ATTEMPT_MS = 45_000;
   const loop = async () => {
-    const r = await attempt(n);
+    console.log(`[enroll] attempt ${n} starting (hub ${config.hubUrl})`);
+    // A step that never settles (Tailscale CLI, Syncthing, DNS) must not silently stall enrolment.
+    let timer: NodeJS.Timeout | undefined;
+    const r = await Promise.race([
+      attempt(n),
+      new Promise<{ ok: boolean }>((res) => {
+        timer = setTimeout(() => {
+          console.warn(`[enroll] attempt ${n} timed out after ${ATTEMPT_MS / 1000} s (resolving the agent address, Syncthing or the hub request hung)`);
+          res({ ok: false });
+        }, ATTEMPT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
     if (r.ok) return;
     const delay = Math.min(10 * 60_000, 30_000 * 2 ** Math.min(n - 1, 5));
     n++;

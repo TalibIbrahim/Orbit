@@ -101,6 +101,13 @@ export async function listDisks(maxAgeMs = 30_000): Promise<DiskInfo[]> {
   return disks;
 }
 
+/** Disks from the latest sampler tick (no I/O); bounded direct call only if no sample exists yet. */
+export async function latestDisks(): Promise<DiskInfo[] | null> {
+  if (latest) return latest.disks;
+  if (diskCache) return diskCache.disks;
+  return Promise.race([listDisks().catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
+}
+
 // ───────────────────────────── network ─────────────────────────────
 
 let ifaceCache: { at: number; names: Set<string> } | null = null;
@@ -148,6 +155,7 @@ async function netRates(): Promise<{ rx: number; tx: number }> {
 
 type Base = Omit<AgentStatus, "health" | "tailscale" | "keepalive" | "services"> & { services: Omit<ServiceStat, "diskUsed">[] };
 let latest: Base | null = null;
+export const lastSampleTs = (): number | null => latest?.ts ?? null;
 let firstTick: Promise<void> = Promise.resolve();
 
 function mapServices(ctx: Ctx, containers: ContainerStat[], units: Map<string, UnitSample>) {
@@ -230,9 +238,9 @@ function latestSize(ctx: Ctx, key: string): number | null {
 }
 
 async function buildStatus(ctx: Ctx): Promise<AgentStatus> {
-  if (!latest) await Promise.race([firstTick, new Promise((r) => setTimeout(r, 15_000))]);
+  if (!latest) await Promise.race([firstTick, new Promise((r) => setTimeout(r, 5_000))]);
   if (!latest) throw new HttpError(503, "metrics not ready");
-  const [tailscale] = await Promise.all([ctx.tailscale.info()]);
+  const tailscale = await ctx.tailscale.info();
   return {
     ...latest,
     health: health(ctx),

@@ -1,7 +1,8 @@
 import type { ReplicaHealth, ReplicaState, ReplicationHealth, SyncthingSummary } from "@orbit/shared";
 import { cachedOnly } from "./agents";
 import { db, listDevices } from "./db";
-import { deviceWarnings, ONLINE_MS, primaryHost, replicaFolderIssue } from "./devices";
+import { isOnline } from "./agents";
+import { deviceWarnings, primaryHost, replicaFolderIssue } from "./devices";
 import { getSettings } from "./settings";
 
 interface SyncRow { device_id: string; folder_id: string; last_in_sync_at: number | null; last_completion: number | null }
@@ -36,7 +37,7 @@ export function computeReplication(now = Date.now()): ReplicationHealth {
   const sharedIds = new Set([...settings.sharedFolders.map((f) => f.id), ...(pst?.folders ?? []).map((f) => f.id)]);
 
   const replicas: ReplicaHealth[] = devices.filter((d) => d.id !== primary?.id && d.enrolled).map((d) => {
-    const online = d.lastSeen != null && now - d.lastSeen < ONLINE_MS;
+    const online = isOnline(d, now);
     const own = cachedOnly<SyncthingSummary>(d.id, "/syncthing");
     const ids = [...sharedIds].filter((id) => own?.folders.some((f) => f.id === id) || pst?.folders.some((f) => f.id === id));
     return {
@@ -74,7 +75,7 @@ export function computeReplication(now = Date.now()): ReplicationHealth {
     primary: primary
       ? {
           deviceId: primary.id, name: primary.name, lastSeen: primary.lastSeen,
-          online: primary.lastSeen != null && now - primary.lastSeen < ONLINE_MS,
+          online: isOnline(primary, now),
         }
       : null,
     sharedFolders: (pst?.folders ?? []).filter((f) => sharedIds.has(f.id)).map((f) => ({ id: f.id, label: f.label, type: f.type, globalBytes: f.globalBytes })),

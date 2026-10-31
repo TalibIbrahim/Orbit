@@ -3,7 +3,7 @@ import type {
   StorageBreakdown, SyncthingSummary,
 } from "@orbit/shared";
 import { GB } from "@orbit/shared";
-import { cachedOnly } from "./agents";
+import { cachedOnly, isOnline } from "./agents";
 import { bundleInfo } from "./bundle";
 import { db, listDevices, toAlert } from "./db";
 import { COLORS, notify } from "./notify";
@@ -36,7 +36,7 @@ function collect(now: number): Cond[] {
     } else if (offlineMs != null && offlineMs > H) {
       add("device-offline", "warning", d.id, "", `Device offline: ${d.name}`, `${d.name} has not been seen for ${ago(offlineMs)}.`);
     }
-    const online = offlineMs != null && offlineMs < 3 * 60_000;
+    const online = isOnline(d, now);
 
     const st = cachedOnly<AgentStatus>(d.id, "/status");
     if (st && online) {

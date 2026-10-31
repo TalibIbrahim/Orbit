@@ -1,7 +1,6 @@
 import type { ImmichLinks, PromoteStatus } from "@orbit/shared";
-import { cachedOnly } from "@/lib/server/agents";
+import { cachedOnly, isOnline } from "@/lib/server/agents";
 import { listDevices } from "@/lib/server/db";
-import { ONLINE_MS } from "@/lib/server/devices";
 import { getSettings } from "@/lib/server/settings";
 import { guard, json } from "@/lib/server/http";
 
@@ -18,7 +17,7 @@ export const GET = () =>
       lanUrl: primary?.immichLanUrl ?? null,
       tailscaleUrl: primary?.immichTailscaleUrl ?? null,
       standbyUrl: promoted ? (promote?.immichUrl ?? null) : null,
-      primaryOnline: !!primary?.lastSeen && Date.now() - primary.lastSeen < ONLINE_MS,
+      primaryOnline: primary ? isOnline(primary) : false,
       promoted,
       primaryMode: getSettings().primaryMode,
     });

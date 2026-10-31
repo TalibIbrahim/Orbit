@@ -13,7 +13,7 @@ const SLOW_EVERY = 5; // ticks
 async function pollDevice(d: DeviceRow, slow: boolean): Promise<void> {
   if (!d.enrolled || !d.agentUrl) return;
   const r = await cachedGet<{ health?: { agentVersion?: string } }>(d, "/status");
-  if (!r.online) return; // agent down: the slow set would just time out too
+  if (r.error) return; // agent not answering right now: the slow set would just time out too
   if (!slow) return;
   const paths = ["/syncthing", "/folders", "/backups", "/keepalive"];
   if (d.role === "standby") paths.push("/idle-risk", "/storage", "/promote");

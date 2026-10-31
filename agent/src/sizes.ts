@@ -9,7 +9,7 @@ const IGNORED = new Set(["EACCES", "EPERM", "ENOENT", "ENOTDIR", "EBUSY", "UNKNO
 
 function duBytes(path: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const p = spawn("du", ["-sb", path], { stdio: ["ignore", "pipe", "ignore"], timeout: 15 * 60_000 });
+    const p = spawn("du", ["-sb", path], { stdio: ["ignore", "pipe", "ignore"], timeout: 10 * 60_000 });
     let out = "";
     p.stdout.on("data", (c) => (out += c));
     p.on("error", reject);
@@ -20,12 +20,13 @@ function duBytes(path: string): Promise<number> {
   });
 }
 
-async function walkBytes(root: string): Promise<number> {
+async function walkBytes(root: string, deadline = Infinity): Promise<number> {
   const stack = [root];
   let total = 0;
   let active = 0;
   const worker = async () => {
     for (;;) {
+      if (Date.now() > deadline) throw new Error("walk exceeded time budget");
       const dir = stack.pop();
       if (dir === undefined) {
         if (active === 0) return;
@@ -68,7 +69,7 @@ export async function measureDir(path: string): Promise<number> {
       /* fall back to walker */
     }
   }
-  return walkBytes(path);
+  return walkBytes(path, Date.now() + 10 * 60_000);
 }
 
 export async function measureFolder(ctx: Ctx, id: string, path: string): Promise<number> {

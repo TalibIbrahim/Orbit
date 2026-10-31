@@ -45,6 +45,16 @@
       "timeoutMin": 60
     },
     {
+      "id": "prune-dumps",
+      "name": "Prune Immich DB dumps",
+      "kind": "command",
+      "schedule": "45 4 * * *",
+      "command": "/opt/orbit/deploy/arm-free/scripts/prune-dumps.sh",
+      "outputDir": "/srv/orbit/immich-db-dumps",
+      "retention": "newest 14 dumps",
+      "timeoutMin": 10
+    },
+    {
       "id": "restic",
       "name": "Restic offsite backup",
       "kind": "restic",

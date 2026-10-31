@@ -149,16 +149,33 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
     return { available: true, myDeviceId: me, version: version.version, folders: out };
   }
 
+  let inflight: Promise<SyncthingSummary> | null = null;
+  function refresh(): Promise<SyncthingSummary> {
+    inflight ??= (async () => {
+      let value: SyncthingSummary;
+      try {
+        value = await build();
+      } catch (e) {
+        value = { available: false, error: (e as Error).message, myDeviceId: null, version: null, folders: [] };
+      }
+      cache = { at: Date.now(), value };
+      return value;
+    })().finally(() => { inflight = null; });
+    return inflight;
+  }
+
+  /** Stale-while-revalidate: serve any cached value immediately and refresh in the background. */
   async function summary(force = false): Promise<SyncthingSummary> {
-    if (!force && cache && Date.now() - cache.at < 15_000) return cache.value;
-    let value: SyncthingSummary;
-    try {
-      value = await build();
-    } catch (e) {
-      value = { available: false, error: (e as Error).message, myDeviceId: null, version: null, folders: [] };
+    if (force) {
+      // a refresh already in flight may predate the change that prompted the force
+      if (inflight) await inflight.catch(() => undefined);
+      return refresh();
     }
-    cache = { at: Date.now(), value };
-    return value;
+    if (cache) {
+      if (Date.now() - cache.at >= 15_000) void refresh();
+      return cache.value;
+    }
+    return refresh();
   }
 
   return {

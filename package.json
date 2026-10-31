@@ -8,7 +8,8 @@
     "build:web": "npm run build -w web",
     "build": "npm run build:agent && npm run build:web",
     "dev": "npm run dev -w web",
-    "typecheck": "npm run typecheck -w agent && npm run typecheck -w web"
+    "typecheck": "npm run typecheck -w agent && npm run typecheck -w web",
+    "test": "npm run test -w agent && bash tests/migrate-agent-json.test.sh"
   },
   "engines": { "node": ">=22.13" }
 }

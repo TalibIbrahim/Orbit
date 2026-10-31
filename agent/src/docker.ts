@@ -22,8 +22,12 @@ function socketPath(config: AgentConfig): string {
   return config.docker?.socketPath ?? (process.platform === "win32" ? "//./pipe/docker_engine" : "/var/run/docker.sock");
 }
 
-function dockerGet<T>(config: AgentConfig, path: string, timeoutMs = 8000): Promise<T> {
+function dockerGet<T>(config: AgentConfig, path: string, timeoutMs = 5000): Promise<T> {
   return new Promise((resolve, reject) => {
+    const hard = setTimeout(() => req.destroy(new Error("docker request timed out")), timeoutMs);
+    const done = <A extends unknown[]>(fn: (...a: A) => void) => (...a: A) => { clearTimeout(hard); fn(...a); };
+    resolve = done(resolve);
+    reject = done(reject);
     const req = http.request({ socketPath: socketPath(config), path, method: "GET", timeout: timeoutMs }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
@@ -69,7 +73,7 @@ export interface RawContainerStats {
 }
 
 export async function containerStats(config: AgentConfig, id: string, hostCpus: number): Promise<RawContainerStats> {
-  const s = await dockerGet<RawStats>(config, `/containers/${id}/stats?stream=false&one-shot=true`, 10_000);
+  const s = await dockerGet<RawStats>(config, `/containers/${id}/stats?stream=false&one-shot=true`, 5000);
   const usage = s.cpu_stats?.cpu_usage?.total_usage ?? 0;
   const preUsage = s.precpu_stats?.cpu_usage?.total_usage ?? 0;
   const sys = s.cpu_stats?.system_cpu_usage ?? 0;

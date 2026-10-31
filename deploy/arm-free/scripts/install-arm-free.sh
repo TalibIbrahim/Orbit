@@ -235,7 +235,7 @@ elif [ "$MODE" = "arm-free" ]; then
   #  - "immich" service and the 02:30 "immich-db" dump job taken from agent.primary.example.json
   #  - restic jobs kept/added only if /etc/orbit/restic-password exists and a repository is set
   #    (RESTIC_REPOSITORY env, or the value already in the restic job); otherwise removed
-  #  - other jobs (e.g. prune-dumps) kept
+  #  - "prune-dumps" job kept, or added from the template; other jobs kept
   # Idempotent: the file is only rewritten (with a .bak-<timestamp> copy) when something changes.
   CUR_REPO="$(jq -r '[.jobs[]? | select(.kind == "restic" or .id == "restic") | .env.RESTIC_REPOSITORY // empty][0] // empty' "$CFG" 2>/dev/null || true)"
   REPO="${RESTIC_REPOSITORY:-$CUR_REPO}"
@@ -248,31 +248,8 @@ elif [ "$MODE" = "arm-free" ]; then
   CONTAINERS=null; UNITS=null
   if NAMES="$(docker ps -a --format '{{.Names}}' 2>/dev/null)"; then CONTAINERS="$(printf '%s\n' "$NAMES" | sed '/^$/d' | jq -R . | jq -s -c .)"; fi
   if UNIT_LIST="$(systemctl list-unit-files --no-legend --plain 2>/dev/null | awk '{print $1}')"; then UNITS="$(printf '%s\n' "$UNIT_LIST" | sed '/^$/d' | jq -R . | jq -s -c .)"; fi
-  jq --slurpfile tpl "${ARM_FREE_DIR}/agent.primary.example.json" --argjson resticOk "$RESTIC_OK" --arg repo "$REPO" \
-     --argjson missing "$MISSING" --argjson containers "$CONTAINERS" --argjson units "$UNITS" '
-    def staleJob: [(.command // empty), (.args // [] | .[] | select(type == "string"))] | any(. as $f | $missing | any(. == $f));
-    def gone($have; $want): $have != null and ($want | length) > 0
-      and ($want | all(. as $p | $have | all(startswith($p) | not)));
-    def staleSvc: ((.containers // []) | length) + ((.systemdUnits // []) | length) > 0
-      and ((.containers // []) | length == 0 or gone($containers; .))
-      and ((.systemdUnits // []) | length == 0 or gone($units; .));
-    def isRestic: .kind == "restic" or .id == "restic";
-    $tpl[0] as $t
-    | .role = "primary"
-    | del(.promote)
-    | (if .keepalive then .keepalive.defaultEnabled = false else . end)
-    | .services = ([$t.services[] | select(.name == "immich")]
-        + [(.services // [])[] | select((staleSvc | not) and .name != "immich")]
-        | . as $s | $s + [$t.services[] | select(.name as $n | any($s[]; .name == $n) | not)])
-    | .jobs = ((.jobs // []) as $j
-        | [$j[] | select((staleJob | not) and (isRestic | not) and .id != "immich-db")] as $keep
-        | [$t.jobs[] | select(.id == "immich-db")]
-          + $keep
-          + (if $resticOk then
-               ([$j[] | select(isRestic)] | if length > 0 then . else [$t.jobs[] | select(isRestic)] end)
-               | map(.env = ((.env // {}) + {RESTIC_REPOSITORY: $repo, RESTIC_PASSWORD_FILE: (.env.RESTIC_PASSWORD_FILE // "/etc/orbit/restic-password")}))
-             else [] end))
-  ' "$CFG" > "${CFG}.new"
+  jq -f "${ARM_FREE_DIR}/scripts/migrate-agent-json.jq" --slurpfile tpl "${ARM_FREE_DIR}/agent.primary.example.json" --argjson resticOk "$RESTIC_OK" --arg repo "$REPO" \
+     --argjson missing "$MISSING" --argjson containers "$CONTAINERS" --argjson units "$UNITS" "$CFG" > "${CFG}.new"
   if cmp -s <(jq -S . "$CFG") <(jq -S . "${CFG}.new"); then
     rm -f "${CFG}.new"
     log "${CFG} already matches arm-free primary mode"

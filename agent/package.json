@@ -7,7 +7,8 @@
     "dev": "node --watch --experimental-strip-types --no-warnings src/index.ts --config ./agent.dev.json",
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/orbit-agent.mjs"
+    "start": "node dist/orbit-agent.mjs",
+    "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts"
   },
   "dependencies": {
     "@orbit/shared": "*",

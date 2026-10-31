@@ -1,0 +1,22 @@
+{
+  "deviceId": "device-test-1",
+  "name": "old-standby",
+  "role": "standby",
+  "token": "test-token-0123456789abcdef",
+  "listen": { "host": "100.64.0.10", "port": 7420 },
+  "hubUrl": "http://hub.example.test:3000",
+  "dataDir": "/var/lib/orbit",
+  "services": [
+    { "name": "immich", "category": "photos", "containers": ["old_immich_"], "systemdUnits": [], "paths": ["/data/old-immich"] },
+    { "name": "orbit", "category": "services", "containers": ["orbit-web"], "systemdUnits": [], "paths": [] },
+    { "name": "game-server", "category": "games", "containers": ["mc-server"], "systemdUnits": [], "paths": ["/srv/game"] }
+  ],
+  "promote": { "enabled": true, "target": "device-test-2" },
+  "jobs": [
+    { "id": "prune-dumps", "name": "Prune dumps", "kind": "command", "schedule": "0 5 * * *", "command": "/opt/orbit/deploy/arm-free/scripts/prune-dumps.sh" },
+    { "id": "game-backup", "name": "Game backup", "kind": "command", "schedule": "0 1 * * *", "command": "/opt/orbit/old/game-backup.sh" },
+    { "id": "restic", "name": "Restic", "kind": "restic", "schedule": "0 3 * * *", "command": "restic",
+      "args": ["backup", "/data"], "env": { "RESTIC_REPOSITORY": "REPLACE_me", "RESTIC_PASSWORD_FILE": "/etc/orbit/restic-password" } }
+  ],
+  "keepalive": { "command": "/opt/orbit/bin/NeverIdle", "args": [], "defaultEnabled": true }
+}

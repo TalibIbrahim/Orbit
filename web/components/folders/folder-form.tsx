@@ -10,6 +10,7 @@ import type {
   SyncthingSummary,
 } from "@orbit/shared";
 import { Copy, TriangleAlert } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { FolderPicker, basename } from "@/components/folders/folder-picker";
@@ -272,6 +273,15 @@ export function FolderForm({ devices, defaultDeviceId, editing, onSaved, onCance
           {stUnavailable ? (
             <p className="text-xs text-muted-foreground">
               Syncthing is not reachable on this device, so sync pausing cannot be configured right now.
+            </p>
+          ) : st && stFolders.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              This device has no Syncthing folders yet. The shared folders are created when the device is paired with the
+              primary, so this list stays empty until pairing has finished. Check the pairing status on{" "}
+              <Link href="/replication" className="font-medium text-primary underline-offset-4 hover:underline">
+                Replication
+              </Link>
+              .
             </p>
           ) : null}
         </div>

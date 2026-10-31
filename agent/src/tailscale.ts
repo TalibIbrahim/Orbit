@@ -42,13 +42,22 @@ export function createTailscale(_ctx: Ctx): TailscaleApi {
 
   return {
     async info() {
-      if (cache && Date.now() - cache.at < 60_000) return cache.info;
-      inflight ??= fetchInfo().then((info) => {
-        cache = { at: Date.now(), info };
-        inflight = null;
-        return info;
-      });
-      return inflight;
+      const refresh = () => {
+        inflight ??= fetchInfo()
+          .catch(() => NONE)
+          .then((info) => {
+            cache = { at: Date.now(), info };
+            inflight = null;
+            return info;
+          });
+        return inflight;
+      };
+      if (cache) {
+        if (Date.now() - cache.at >= 60_000) void refresh();
+        return cache.info;
+      }
+      // first call only: bounded wait, refresh keeps going in the background
+      return Promise.race([refresh(), new Promise<TailscaleInfo>((r) => setTimeout(() => r(NONE), 3000))]);
     },
   };
 }

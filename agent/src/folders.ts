@@ -6,7 +6,7 @@ import type {
 } from "@orbit/shared";
 import { HttpError, type Router } from "./http.ts";
 import type { Ctx } from "./context.ts";
-import { diskForPath, linearGrowthPerDay, listDisks } from "./metrics.ts";
+import { diskForPath, latestDisks, linearGrowthPerDay } from "./metrics.ts";
 import { measureFolder } from "./sizes.ts";
 
 const DAY = 86_400_000;
@@ -68,7 +68,7 @@ function toFolder(ctx: Ctx, r: Row, disks: DiskInfo[]): FolderLimit {
 }
 
 async function disksSafe(): Promise<DiskInfo[]> {
-  try { return await listDisks(); } catch { return []; }
+  try { return (await latestDisks()) ?? []; } catch { return []; }
 }
 
 // ───────────────────────────── enforcement ─────────────────────────────

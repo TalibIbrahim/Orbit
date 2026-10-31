@@ -4,11 +4,11 @@ import {
   type AgentStatus, defaultReplicaPath, type DeviceRole, type DeviceSummary, type Platform, type SyncthingPairRequest,
   type SyncthingSummary,
 } from "@orbit/shared";
-import { agentSend, cachedGet, cachedOnly, errMsg } from "./agents";
+import { agentSend, cachedGet, cachedOnly, errMsg, isOnline } from "./agents";
 import { type DeviceRow, getCache, getDevice, insertDevice, primaryDevice, toRecord, updateDevice } from "./db";
 import { getSettings } from "./settings";
 
-export const ONLINE_MS = 3 * 60_000;
+export { ONLINE_MS } from "./agents";
 
 export const newToken = () => randomBytes(24).toString("hex");
 
@@ -27,7 +27,7 @@ export function summarize(d: DeviceRow, now = Date.now()): DeviceSummary {
   const rec = toRecord(d);
   return {
     ...rec,
-    online: d.lastSeen != null && now - d.lastSeen < ONLINE_MS,
+    online: isOnline(d, now),
     status: st,
     statusFetchedAt: st ? (statusFetchedAt(d.id) ?? null) : null,
     agentRole: st?.health?.role ?? null,
