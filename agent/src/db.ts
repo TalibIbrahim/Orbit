@@ -65,6 +65,27 @@ export function openDb(dataDir: string): DB {
     );
     CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs (job, started_at);
 
+    -- read-only file manifest of the Immich originals (upload/, library/) per Syncthing folder
+    CREATE TABLE IF NOT EXISTS manifest (
+      folder TEXT NOT NULL,
+      path TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      mtime_ms INTEGER NOT NULL,
+      sha1 TEXT,
+      hashed_size INTEGER,
+      hashed_mtime INTEGER,
+      seen_gen INTEGER NOT NULL,
+      PRIMARY KEY (folder, path)
+    );
+    CREATE TABLE IF NOT EXISTS manifest_state (
+      folder TEXT PRIMARY KEY,
+      root TEXT,
+      generation INTEGER NOT NULL DEFAULT 0,
+      built_at INTEGER,
+      files INTEGER NOT NULL DEFAULT 0,
+      bytes INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS kv (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   type LucideIcon,
   PieChart,
+  SmartphoneCharging,
   Server,
   Settings,
 } from "lucide-react";
@@ -23,6 +24,7 @@ export const NAV_PRIMARY: NavItem[] = [
 ];
 
 export const NAV_MORE: NavItem[] = [
+  { href: "/offload", label: "Offload", icon: SmartphoneCharging },
   { href: "/replication", label: "Replication", icon: HardDriveDownload },
   { href: "/backups", label: "Backups", icon: Archive },
   { href: "/settings", label: "Settings", icon: Settings },

@@ -1,5 +1,6 @@
-import { type HubSettings, type PrimaryMode, PRIMARY_MODES } from "@orbit/shared";
+import { type HubSettings, type ImmichVerifySettings, type PrimaryMode, PRIMARY_MODES } from "@orbit/shared";
 import { db } from "./db";
+import { decryptSecret, encryptSecret } from "./secret";
 
 export const MASK = "••••";
 
@@ -18,7 +19,43 @@ export const DEFAULT_SETTINGS: HubSettings = {
     { id: "immich-db-dumps", label: "Immich DB dumps", replicaPath: "/srv/orbit/immich-db-dumps", versioning: "simple" },
   ],
   tailscaleAuthKey: null,
+  immich: {
+    url: "",
+    apiKey: null,
+    sourceUserIds: [],
+    minCopies: 2,
+    requireNonHostCopy: true,
+    hashRecentDays: 7,
+    samplePercent: 2,
+    scheduleHours: 6,
+    notifyWatermark: true,
+    notifyProblems: true,
+  },
 };
+
+const num = (v: unknown, min: number, max: number, dflt: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt;
+
+/** Immich settings with defaults; apiKey stays encrypted here (see immichApiKey()). */
+function immichOf(stored: Partial<ImmichVerifySettings> | undefined): ImmichVerifySettings {
+  const d = DEFAULT_SETTINGS.immich;
+  const s = stored ?? {};
+  return {
+    url: (s.url || process.env.ORBIT_IMMICH_URL || "").trim().replace(/\/+$/, "").replace(/\/api$/, ""),
+    apiKey: s.apiKey ?? null,
+    sourceUserIds: Array.isArray(s.sourceUserIds) ? s.sourceUserIds.filter((x) => typeof x === "string").slice(0, 50) : [],
+    minCopies: Math.round(num(s.minCopies, 1, 10, d.minCopies)),
+    requireNonHostCopy: typeof s.requireNonHostCopy === "boolean" ? s.requireNonHostCopy : d.requireNonHostCopy,
+    hashRecentDays: Math.round(num(s.hashRecentDays, 0, 365, d.hashRecentDays)),
+    samplePercent: num(s.samplePercent, 0, 100, d.samplePercent),
+    scheduleHours: num(s.scheduleHours, 0, 168, d.scheduleHours),
+    notifyWatermark: typeof s.notifyWatermark === "boolean" ? s.notifyWatermark : d.notifyWatermark,
+    notifyProblems: typeof s.notifyProblems === "boolean" ? s.notifyProblems : d.notifyProblems,
+  };
+}
+
+/** Decrypted Immich API key, server-side only. Never log it or send it to the client. */
+export const immichApiKey = (s: HubSettings = getSettings()): string | null => decryptSecret(s.immich.apiKey);
 
 /** Stored settings merged over defaults + env fallbacks. hubUrl may be "" when unknown (see hubUrlFor). */
 export function getSettings(): HubSettings {
@@ -35,6 +72,7 @@ export function getSettings(): HubSettings {
     primaryMode: envMode(),
     ...stored,
     thresholds: { ...DEFAULT_SETTINGS.thresholds, ...stored.thresholds },
+    immich: immichOf(stored.immich),
   };
   s.hubUrl = (s.hubUrl || process.env.ORBIT_HUB_URL || "").replace(/\/+$/, "");
   s.discordWebhookUrl = s.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL || null;
@@ -55,6 +93,7 @@ export function maskSettings(s: HubSettings): HubSettings {
     ...s,
     email: s.email ? { ...s.email, password: s.email.password ? MASK : null } : null,
     tailscaleAuthKey: s.tailscaleAuthKey ? MASK : null,
+    immich: { ...s.immich, apiKey: s.immich.apiKey ? MASK : null },
   };
 }
 
@@ -70,6 +109,15 @@ export function putSettings(patch: Partial<HubSettings>): HubSettings {
   if (Array.isArray(patch.sharedFolders)) next.sharedFolders = patch.sharedFolders;
   if ("tailscaleAuthKey" in patch) {
     next.tailscaleAuthKey = patch.tailscaleAuthKey === MASK ? cur.tailscaleAuthKey : patch.tailscaleAuthKey?.trim() || null;
+  }
+  if (patch.immich && typeof patch.immich === "object") {
+    const p = patch.immich;
+    const merged = immichOf({ ...cur.immich, ...p, apiKey: cur.immich.apiKey });
+    if ("apiKey" in p && p.apiKey !== MASK) {
+      const k = typeof p.apiKey === "string" ? p.apiKey.trim() : "";
+      merged.apiKey = k ? encryptSecret(k) : null; // stored encrypted, never returned
+    }
+    next.immich = merged;
   }
   if ("email" in patch) {
     const e = patch.email;

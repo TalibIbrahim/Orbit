@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { AlertSettingsForm } from "@/components/settings/alert-settings-form";
 import { AlertsList } from "@/components/settings/alerts-list";
 import { GeneralTab } from "@/components/settings/general-tab";
+import { ImmichTab } from "@/components/settings/immich-tab";
 import { StandbyTab } from "@/components/settings/standby-tab";
 import { useSettings } from "@/components/settings/use-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,7 +15,7 @@ function SettingsInner() {
   const api = useSettings();
   const tabParam = useSearchParams().get("tab");
   const armFree = api.settings?.primaryMode === "arm-free";
-  const initial = tabParam === "standby" || tabParam === "general" ? tabParam : "alerts";
+  const initial = tabParam === "standby" || tabParam === "general" || tabParam === "immich" ? tabParam : "alerts";
 
   return (
     <div>
@@ -23,6 +24,7 @@ function SettingsInner() {
         <TabsList>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="standby">{armFree ? "arm-free" : "Standby"}</TabsTrigger>
+          <TabsTrigger value="immich">Immich</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
         </TabsList>
         <TabsContent value="alerts" className="mt-3 space-y-4">
@@ -31,6 +33,9 @@ function SettingsInner() {
         </TabsContent>
         <TabsContent value="standby" className="mt-3">
           <StandbyTab armFree={api.settings ? armFree : undefined} />
+        </TabsContent>
+        <TabsContent value="immich" className="mt-3">
+          <ImmichTab api={api} />
         </TabsContent>
         <TabsContent value="general" className="mt-3">
           <GeneralTab api={api} />

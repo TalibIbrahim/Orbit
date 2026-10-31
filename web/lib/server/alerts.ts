@@ -8,6 +8,7 @@ import { bundleInfo } from "./bundle";
 import { db, listDevices, toAlert } from "./db";
 import { COLORS, notify } from "./notify";
 import { computeReplication } from "./replication";
+import { latestRun } from "./verify";
 import { getSettings } from "./settings";
 
 type Cond = Pick<AlertEvent, "key" | "kind" | "severity" | "deviceId" | "title" | "message">;
@@ -73,6 +74,15 @@ function collect(now: number): Cond[] {
     }
   }
 
+  // Phone backup verification: missing / mismatched files on a copy (from the latest run).
+  for (const c of latestRun()?.copies ?? []) {
+    const bad = c.missing + c.sizeMismatch + c.hashMismatch;
+    if (!bad) continue;
+    const parts = [c.missing && `${c.missing} missing`, c.sizeMismatch && `${c.sizeMismatch} size mismatch`, c.hashMismatch && `${c.hashMismatch} hash mismatch`].filter(Boolean);
+    const first = c.problems.filter((p) => p.kind !== "extra").slice(0, 3).map((p) => `${p.kind}: ${p.path}`).join("\n");
+    add("backup-verify", c.hashMismatch ? "critical" : "warning", c.deviceId, "", `Photo backup problem on ${c.name}`, `${parts.join(", ")} (Orbit -> Offload).${first ? `\n${first}` : ""}`);
+  }
+
   for (const r of computeReplication(now).replicas) {
     for (const f of r.folders) {
       if (f.lagMs != null && f.lagMs > t.replicaBehindHours * H)
@@ -122,9 +132,10 @@ function libraryAlert(
   add("library-near-limit", critical ? "critical" : "warning", deviceId, "", `Immich library volume nearly full on ${name}`, lines.join("\n"));
 }
 
-const NO_NOTIFY: AlertKind[] = ["update-available"];
+const NO_NOTIFY_ALWAYS: AlertKind[] = ["update-available"];
 
 export async function evaluateAlerts(now = Date.now()): Promise<void> {
+  const NO_NOTIFY: AlertKind[] = getSettings().immich.notifyProblems ? NO_NOTIFY_ALWAYS : [...NO_NOTIFY_ALWAYS, "backup-verify"];
   const conds = collect(now);
   const q = db();
   const open = new Map((q.prepare("SELECT * FROM alerts WHERE resolved_at IS NULL").all() as Record<string, unknown>[]).map((r) => [r.key as string, toAlert(r)]));

@@ -2,7 +2,9 @@ import { cachedGet, errMsg } from "./agents";
 import { evaluateAlerts } from "./alerts";
 import { type DeviceRow, listDevices } from "./db";
 import { needsPairing, pairWithPrimary, registerLocalAgent } from "./devices";
-import { getSettings } from "./settings";
+import { immichNewestUpload } from "./immich";
+import { getSettings, immichApiKey } from "./settings";
+import { verifyTick } from "./verify";
 import { updateReplicaSync } from "./replication";
 
 const g = globalThis as unknown as { __orbitPoller?: boolean };
@@ -36,6 +38,12 @@ async function tick(n: number): Promise<void> {
   }
   updateReplicaSync();
   await evaluateAlerts();
+  // Phone backup verification: scheduled runs + a run after an upload batch settles (read-only).
+  const s = getSettings();
+  const key = immichApiKey(s);
+  await verifyTick(Date.now(), key && s.immich.url ? () => immichNewestUpload({ url: s.immich.url, apiKey: key }) : undefined).catch((e) =>
+    console.warn("[verify] tick:", errMsg(e)),
+  );
 }
 
 export function startPoller(): void {

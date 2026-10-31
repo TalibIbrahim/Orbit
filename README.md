@@ -61,7 +61,7 @@ Single source of truth is arm-free; every other device is a copy you can restore
 5. [Immich, Syncthing and restic](#5-immich-syncthing-and-restic)
 6. [Phone setup](#6-phone-setup)
 7. [Folder storage limits](#7-folder-storage-limits)
-8. [Backups](#8-backups)
+8. [Backups](#8-backups) (incl. [phone backup verification and safe offload](#phone-backup-verification-and-safe-offload))
 9. [Promote standby, switch back, restore test](#9-promote-standby-switch-back-restore-test) (details in [docs/failover-restore.md](docs/failover-restore.md))
 10. [Keep-alive and idle-risk meter](#10-keep-alive-and-idle-risk-meter)
 11. [Auto-updates](#11-auto-updates)
@@ -478,6 +478,31 @@ Jobs live in the `jobs` array of `agent.json`; add your own without code changes
 ```
 
 Backups page (or `POST /v1/backups/:job/run` on the agent): **Run backup now** on any job card.
+
+### Phone backup verification and safe offload
+
+Orbit checks that every copy of your Immich library (arm-free and each replica) holds every photo and video Immich knows about, and tells you when it is safe to free up space on your phone. **Orbit only verifies and advises: it never deletes, moves or modifies photos anywhere** (no such action exists in the UI, the hub API or the agent). Removing photos from the phone is something you do yourself in the Immich app.
+
+**Set up** (Settings -> Immich):
+
+1. In Immich: Account Settings -> API Keys -> new key with only the **`asset.read`** and **`user.read`** permissions.
+2. Enter the Immich URL (`http://arm-free.<tailnet>.ts.net:2283`, no `/api`) and the key, then **Test connection**. The key is stored encrypted in the hub database (AES-256-GCM, key in `<data>/secret.key` or `ORBIT_SECRET_KEY`) and is never shown again or logged.
+3. Optionally limit to some Immich users, and set the rules below.
+
+**What a run does** (Verify now, every `scheduleHours` (default 6), and 15 minutes after an upload batch settles):
+
+- **Immich (source of truth):** all non-trashed assets the key can see (`POST /api/search/metadata`), including the hidden video part of Live Photos. Immich v3 no longer reports the uploading device, so counts are per Immich user: the key's owner plus partners who share their timeline with them. Locked-folder items are never visible to an API key and are not checked; assets outside the library folder (external libraries) are counted as skipped.
+- **Manifests:** each agent lists the Immich originals in its copy of the `immich-library` folder (`upload/` and `library/` only; thumbnails, encoded videos, profile pictures, `.stversions` and files still being written such as `*.partial` or Syncthing temp files are ignored). Scans are incremental and stored on the device; the hub pages through them.
+- **Hashes:** files uploaded in the last `hashRecentDays` (default 7) plus a random `samplePercent` (default 2%) of older ones are hashed (SHA-1, cached by size and modification time) and compared with Immich's checksum.
+- **Diff per copy:** missing, size mismatch, hash mismatch, and extra files (informational). Replicas are also compared with arm-free's own files, so XMP sidecars, which the Immich API does not list, are covered too.
+- **Syncthing per replica:** 100% complete, nothing needed, no folder error, not paused (by you or by a folder limit), versioning on, dumps folder in sync.
+- **Database dump:** the newest Immich DB dump must be newer than the newest upload, so albums and metadata are covered.
+
+**Verified-through date and "Safe to offload":** each copy is verified through the upload time just before its first problem. The overall date is the newest time that at least `minCopies` (default 2) verified copies reach, including one that is not the Immich host (`requireNonHostCopy`), capped at the newest DB dump. The status is **Safe to offload** only if every online copy is verified with zero problems, enough copies are verified, the dump is newer than the newest upload, nothing is paused and versioning is on. Otherwise it is **Not yet** with the reasons, or **Unknown** (not configured, Immich unreachable, nothing verified yet).
+
+**Offload page:** shows the status, the verified-through date and the recommended cutoff (start of that day), then the steps in the Immich app on the phone: check the backup screen shows 0 remaining, open **Free Up Space** (it only removes items already backed up) with the recommended cutoff, review and confirm. Deleted items stay in the phone's trash (iOS Recently Deleted: 30 days; Android: the gallery app's trash, often 30 days) until it is emptied.
+
+**Notifications** (Discord/email, toggles in Settings -> Immich): a new verified-through date ("all copies verified through ..."), and missing or mismatched files (raised as a "Photo backup problem" alert, resolved automatically when fixed). History of runs is kept on the Offload page (last 200 runs).
 
 ## 9. Promote standby, switch back, restore test
 

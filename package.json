@@ -9,7 +9,7 @@
     "build": "npm run build:agent && npm run build:web",
     "dev": "npm run dev -w web",
     "typecheck": "npm run typecheck -w agent && npm run typecheck -w web",
-    "test": "npm run test -w agent && bash tests/migrate-agent-json.test.sh"
+    "test": "npm run test -w agent && bash tests/migrate-agent-json.test.sh && npm run test -w web"
   },
   "engines": { "node": ">=22.13" }
 }

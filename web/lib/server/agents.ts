@@ -26,7 +26,7 @@ export class AgentError extends Error {
 
 export const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-async function agentFetch(device: DeviceRow, method: string, path: string, body?: unknown): Promise<Response> {
+async function agentFetch(device: DeviceRow, method: string, path: string, body?: unknown, timeoutMs = TIMEOUT_MS): Promise<Response> {
   if (!device.agentUrl) throw new AgentError("device is not enrolled yet");
   const url = `${device.agentUrl.replace(/\/+$/, "")}/v1${path.startsWith("/") ? path : `/${path}`}`;
   try {
@@ -37,7 +37,7 @@ async function agentFetch(device: DeviceRow, method: string, path: string, body?
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
   } catch (e) {
@@ -97,8 +97,8 @@ export async function cachedGet<T>(device: DeviceRow, path: string): Promise<Cac
 export const cachedOnly = <T>(deviceId: string, path: string): T | null => getCache<T>(deviceId, path)?.data ?? null;
 
 /** Proxy a non-GET call. Throws AgentError (503) when offline; agent error statuses are passed through with their body. */
-export async function agentSend<T>(device: DeviceRow, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await agentFetch(device, method, path, body);
+export async function agentSend<T>(device: DeviceRow, method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+  const res = await agentFetch(device, method, path, body, timeoutMs);
   const text = await res.text();
   let json: unknown = null;
   try {

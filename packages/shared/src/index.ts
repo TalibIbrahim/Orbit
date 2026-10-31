@@ -504,7 +504,8 @@ export type AlertKind =
   | "device-offline"
   | "update-available"
   | "backup-failed"
-  | "library-near-limit"; // arm-free mode: the volume holding immich-library is nearly full
+  | "library-near-limit" // arm-free mode: the volume holding immich-library is nearly full
+  | "backup-verify"; // phone backup verification found missing / mismatched files
 
 export interface AlertEvent {
   key: string; // dedupe key, e.g. "disk-high:arm-free:/"
@@ -550,6 +551,7 @@ export interface HubSettings {
   // ^ what new replicas get. replicaPath = the folder's path on arm-free: the standby copy in device mode,
   //   the Send Only source in arm-free mode. Other replicas use DeviceRecord.replicaPaths / defaultReplicaPath.
   tailscaleAuthKey: string | null; // optional, baked into install scripts (masked on GET)
+  immich: ImmichVerifySettings; // phone backup verification (Settings -> Immich)
 }
 
 export interface ImmichLinks {
@@ -579,3 +581,156 @@ export interface RejectedEnroll {
   reason: string;
 }
 // GET    /api/enroll                                    -> { rejected: RejectedEnroll[] } (last 30 min)
+
+// ───────────────────────────── Phone backup verification (read-only) ─────────────────────────────
+// Orbit only verifies and advises. No code path deletes, moves or modifies photos anywhere.
+
+/** One file of the Immich originals tree on a device (agent manifest). */
+export interface ManifestEntry {
+  path: string; // relative to the Syncthing folder root, "/" separators, e.g. "library/admin/2026/2026-10-31/IMG_0001.HEIC"
+  size: number;
+  mtimeMs: number;
+  sha1: string | null; // lowercase hex, only when hashed (cached by path+size+mtime)
+}
+
+export interface ManifestStatus {
+  folderId: string; // Syncthing folder id, e.g. "immich-library"
+  root: string | null; // local path of that folder on the device
+  available: boolean; // folder found and readable
+  error?: string;
+  files: number;
+  bytes: number;
+  hashed: number; // entries with a cached sha1
+  builtAt: number | null; // when the last complete scan finished
+  building: boolean;
+  scanned: number; // files seen by the scan in progress
+  generation: number; // increments on every complete scan
+}
+
+export interface ManifestPage {
+  entries: ManifestEntry[]; // sorted by path (byte order)
+  next: string | null; // pass as ?after= for the next page; null = done
+  generation: number;
+}
+
+export interface ManifestHashRequest {
+  folderId: string;
+  paths: string[]; // relative paths to hash (max 2000 per call)
+}
+export interface ManifestHashResponse {
+  hashes: { path: string; sha1: string | null; error?: string }[];
+  pending: string[]; // not hashed within the time budget; ask again
+}
+
+// Agent routes (Bearer):
+// GET  /v1/manifest?folder=<id>                      -> ManifestStatus (starts a scan if none is fresh)
+// POST /v1/manifest/refresh  { folderId }            -> ManifestStatus (starts an incremental rescan)
+// GET  /v1/manifest/entries?folder=<id>&after=<path>&limit=<n<=5000> -> ManifestPage
+// POST /v1/manifest/hash     ManifestHashRequest     -> ManifestHashResponse
+
+/** A file Immich says must exist (from the Immich API). */
+export interface ExpectedFile {
+  path: string; // relative to the library root (same form as ManifestEntry.path)
+  assetId: string;
+  ownerId: string;
+  deviceId?: string; // not exposed by the Immich v3 API (kept optional for older servers)
+  kind: "photo" | "video" | "sidecar";
+  size: number | null; // from Immich exif when known
+  sha1: string | null; // Immich checksum as lowercase hex (originals only)
+  createdAt: number; // upload time (Immich asset createdAt), ms
+}
+
+export type CopyProblemKind = "missing" | "size-mismatch" | "hash-mismatch" | "extra";
+export interface CopyProblem {
+  kind: CopyProblemKind;
+  path: string;
+  detail?: string;
+  createdAt?: number;
+}
+
+export interface CopyVerification {
+  deviceId: string; // hub device id
+  name: string;
+  isHost: boolean; // arm-free / the Immich host itself
+  online: boolean;
+  lastSeen: number | null;
+  expectedFiles: number;
+  presentFiles: number; // expected files found with matching size (and hash where checked)
+  files: number; // manifest files
+  bytes: number;
+  hashed: number; // files whose hash was compared
+  missing: number;
+  sizeMismatch: number;
+  hashMismatch: number;
+  extra: number; // files not known to Immich (informational)
+  problems: CopyProblem[]; // first 50
+  syncOk: boolean; // Syncthing: 100%, 0 needed, no errors, not paused, versioning on (replicas)
+  syncIssues: string[];
+  watermark: number | null; // every expected file created at or before this time is verified on this copy
+  verifiedAt: number | null;
+  error?: string;
+}
+
+export type OffloadState = "safe" | "not-yet" | "unknown";
+
+/**
+ * Uploads per Immich user. Immich v3 no longer exposes the uploading device on assets, so sources are
+ * per user (the API key owner plus partners who share their timeline with them).
+ */
+export interface PhoneSource {
+  ownerId: string;
+  ownerName: string;
+  photos: number;
+  videos: number;
+  livePhotoVideos: number; // motion parts of Live Photos (hidden assets)
+  bytes: number; // sum of known file sizes
+  newestUpload: number | null;
+}
+
+export type VerifyTrigger = "manual" | "schedule" | "upload";
+
+export interface VerificationRunSummary {
+  id: number;
+  startedAt: number;
+  finishedAt: number | null;
+  trigger: VerifyTrigger;
+  state: OffloadState;
+  watermark: number | null; // overall verified-through
+  reasons: string[];
+  error?: string;
+}
+export interface VerificationRun extends VerificationRunSummary {
+  copies: CopyVerification[];
+  sources: PhoneSource[];
+  newestAsset: number | null;
+  newestDump: number | null;
+}
+
+export interface BackupVerifyResponse {
+  configured: boolean; // Immich URL + API key set
+  running: boolean;
+  latest: VerificationRun | null;
+  history: VerificationRunSummary[]; // newest first, max 50
+  recommendedCutoff: number | null; // date to use in the phone app (start of the watermark day)
+}
+
+/** Settings -> Immich (part of HubSettings). apiKey is write-only: GET returns "••••" when set. */
+export interface ImmichVerifySettings {
+  url: string; // e.g. http://arm-free.<tailnet>.ts.net:2283 (no /api)
+  apiKey: string | null;
+  sourceUserIds: string[]; // Immich user ids to track; [] = every user the key can see
+  minCopies: number; // verified copies required (default 2)
+  requireNonHostCopy: boolean; // at least one copy that is not arm-free (default true)
+  hashRecentDays: number; // hash every file uploaded in the last N days (default 7)
+  samplePercent: number; // plus a random sample of older files (default 2)
+  scheduleHours: number; // scheduled run interval, 0 = off (default 6)
+  notifyWatermark: boolean; // "all copies verified through <date>"
+  notifyProblems: boolean; // missing / mismatched files
+}
+
+// Hub routes:
+// GET  /api/backup-verify              -> BackupVerifyResponse
+// POST /api/backup-verify/run          -> { started: boolean }   (the only action besides settings)
+// GET  /api/backup-verify/runs/:id     -> VerificationRun
+// GET  /api/immich/users               -> { id: string; name: string; email: string }[] (users the key can see)
+// POST /api/immich/test  { url?, apiKey? } -> { ok: boolean; error?: string; version?: string }

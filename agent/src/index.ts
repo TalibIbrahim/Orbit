@@ -14,6 +14,7 @@ import { createTailscale } from "./tailscale.ts";
 import { createSyncthing, registerSyncthingRoutes } from "./syncthing.ts";
 import { startJobs, registerBackupRoutes } from "./jobs.ts";
 import { createKeepalive, registerKeepaliveRoutes } from "./keepalive.ts";
+import { registerManifestRoutes } from "./manifest.ts";
 import { registerPromoteRoutes } from "./promote.ts";
 import { startUpdater, registerUpdateRoutes, enrollWithHub } from "./updater.ts";
 
@@ -35,6 +36,7 @@ async function main() {
   registerBackupRoutes(router, ctx);
   registerKeepaliveRoutes(router, ctx);
   registerPromoteRoutes(router, ctx);
+  registerManifestRoutes(router, ctx);
   registerUpdateRoutes(router, ctx);
 
   const server = startServer(router, { host: config.listen.host, port: config.listen.port, token: config.token });
