@@ -144,6 +144,19 @@ curl -fsSL "${HUB_URL}/agent/orbit-agent.mjs" -o "${AGENT_DIR}/orbit-agent.mjs.n
 mv "${AGENT_DIR}/orbit-agent.mjs.new" "${AGENT_DIR}/orbit-agent.mjs"
 
 # --- config ------------------------------------------------------------------------------
+# An agent.json from an earlier install (other role / token / device) would make this agent
+# answer with the wrong identity: back it up and replace it.
+if [ -f "$CFG" ]; then
+  OLD_ID="$(jq -r '.deviceId // empty' "$CFG" 2>/dev/null || true)"
+  OLD_ROLE="$(jq -r '.role // empty' "$CFG" 2>/dev/null || true)"
+  OLD_TOKEN="$(jq -r '.token // empty' "$CFG" 2>/dev/null || true)"
+  if [ "$OLD_ID" != "$DEVICE_ID" ] || [ "$OLD_ROLE" != "$ROLE" ] || [ "$OLD_TOKEN" != "$TOKEN" ]; then
+    BAK="${CFG}.bak-$(date +%Y%m%d-%H%M%S)"
+    cp -p "$CFG" "$BAK"
+    rm -f "$CFG"
+    log "existing ${CFG} (role '${OLD_ROLE:-?}', device '${OLD_ID:-?}') does not match this install; backed up to ${BAK}, replacing it"
+  fi
+fi
 if [ ! -f "$CFG" ]; then
   LISTEN_HOST="${TS_IP:-0.0.0.0}"
   jq -n --arg id "$DEVICE_ID" --arg name "$DEVICE_NAME" --arg role "$ROLE" --arg token "$TOKEN" \

@@ -75,7 +75,22 @@ if (-not $syncExe) {
 }
 
 $cfgPath = "$dataDir\agent.json"
-if (-not (Test-Path $cfgPath)) {
+$writeCfg = -not (Test-Path $cfgPath)
+if (-not $writeCfg) {
+  # An agent.json from an earlier install (other role / token / device) would make this agent
+  # answer with the wrong identity: back it up and replace it.
+  $old = $null
+  try { $old = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json } catch { }
+  if (-not $old -or $old.token -ne $Token -or $old.role -ne $Role -or $old.deviceId -ne $DeviceId) {
+    $bak = "$cfgPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+    Copy-Item -LiteralPath $cfgPath -Destination $bak -Force
+    $oldDesc = if ($old) { "role '$($old.role)', device '$($old.deviceId)'" } else { "unreadable" }
+    Write-Host "  existing $cfgPath ($oldDesc) does not match this install (role '$Role', device '$DeviceId')"
+    Write-Host "  backed it up to $bak and replacing it"
+    $writeCfg = $true
+  }
+}
+if ($writeCfg) {
   $cfg = [ordered]@{
     deviceId = $DeviceId; name = $DeviceName; role = $Role; token = $Token
     listen = [ordered]@{ host = $tsIp; port = 7420 }
@@ -88,7 +103,12 @@ if (-not (Test-Path $cfgPath)) {
   Write-Utf8NoBom $cfgPath ($cfg | ConvertTo-Json -Depth 10)
   & icacls.exe $cfgPath /inheritance:r /grant:r "SYSTEM:(F)" "Administrators:(F)" | Out-Null
   Write-Host "  wrote $cfgPath"
-} else { Write-Host "  $cfgPath exists, keeping it" }
+  # A running agent keeps its old config: stop it so it restarts with the new file
+  # (the runner restarts it within seconds; the scheduled task below also starts it).
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*orbit-agent.mjs*" } |
+    ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
+} else { Write-Host "  $cfgPath matches this device, keeping it" }
 
 Step "Scheduled tasks"
 $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"

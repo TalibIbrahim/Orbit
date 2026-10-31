@@ -1,30 +1,26 @@
 "use client";
 
-import type { DeviceRecord, DeviceRole, DeviceSummary } from "@orbit/shared";
+import type { DeviceRecord, DeviceSummary } from "@orbit/shared";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiSend } from "@/lib/api";
-import { usePrimaryMode } from "@/lib/hooks";
+import { RoleBadge } from "./device-parts";
 
 function EditForm({ device, onDone, onCancel }: { device: DeviceSummary; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState(device.name);
-  const [role, setRole] = useState<DeviceRole>(device.role);
   const [lan, setLan] = useState(device.immichLanUrl ?? "");
   const [ts, setTs] = useState(device.immichTailscaleUrl ?? "");
   const [busy, setBusy] = useState(false);
-  const { mode } = usePrimaryMode();
 
   async function save() {
     setBusy(true);
     try {
       await apiSend<DeviceRecord>("PATCH", `/api/devices/${device.id}`, {
         name: name.trim(),
-        role,
         immichLanUrl: lan.trim() || null,
         immichTailscaleUrl: ts.trim() || null,
       });
@@ -51,18 +47,15 @@ function EditForm({ device, onDone, onCancel }: { device: DeviceSummary; onDone:
       </div>
       <div className="space-y-2">
         <Label>Role</Label>
-        <Select value={role} onValueChange={(v) => setRole(v as DeviceRole)}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="primary">Primary</SelectItem>
-            {mode !== "arm-free" || device.role === "standby" ? <SelectItem value="standby">Standby</SelectItem> : null}
-            <SelectItem value="replica">Replica</SelectItem>
-          </SelectContent>
-        </Select>
+        <div>
+          <RoleBadge role={device.role} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          The role is set when the device is installed (its agent config and Syncthing folders depend on it), so it cannot
+          be changed here. Remove the device and add it again as a Replica.
+        </p>
       </div>
-      {role === "primary" ? (
+      {device.role === "primary" ? (
         <>
           <div className="space-y-2">
             <Label htmlFor="dev-lan">Immich LAN URL</Label>
@@ -92,7 +85,7 @@ export function EditDeviceDialog({ device, onClose, onDone }: { device: DeviceSu
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit device</DialogTitle>
-          <DialogDescription>Rename or change the role of {device?.name}.</DialogDescription>
+          <DialogDescription>Rename {device?.name} or set its Immich URLs.</DialogDescription>
         </DialogHeader>
         {device ? (
           <EditForm

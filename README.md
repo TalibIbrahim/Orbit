@@ -55,7 +55,7 @@ Single source of truth is arm-free; every other device is a copy you can restore
 
 0. [Choose a mode](#choose-a-mode)
 1. [Overview and features](#1-overview-and-features)
-2. [Set up arm-free](#2-set-up-arm-free)
+2. [Set up arm-free](#2-set-up-arm-free) (migrating from device mode: [2.7](#27-migrating-an-existing-device-mode-install-to-arm-free-mode))
 3. [Set up the PC and replicas](#3-set-up-the-pc-and-replicas)
 4. [Tailscale notes](#4-tailscale-notes)
 5. [Immich, Syncthing and restic](#5-immich-syncthing-and-restic)
@@ -130,7 +130,7 @@ Same steps in both modes; only the install command and what it starts differ.
 1. OCI console -> Compute -> Create instance. Shape `VM.Standard.A1.Flex`, **2 OCPU / 12 GB** (this is exactly what the Always Free allowance covers, see [verified facts](#verified-facts-oct-2026)). Image: Ubuntu 24.04 (aarch64). The installer also accepts 22.04.
 2. Storage: the Always Free limit is 200 GB total for boot plus block volumes. Suggested split: **50 GB boot + 150 GB block volume**. Only up to five volume backups are free.
 3. Add your SSH public key, create the instance, then attach the block volume to it.
-4. VCN security list: ingress for **TCP 22 only** (from your IP if you can). Nothing else. The installer does not touch iptables and nothing in the stacks is published except on the Tailscale IP.
+4. VCN security list: ingress for **TCP 22 only** (from your IP if you can). Nothing else. Nothing in the stacks is published except on the Tailscale IP. The installer's only iptables change is an INPUT accept for TCP 7420 from Docker bridges (`br+`, `docker0`), so the `orbit-web` container can reach the host agent past the OCI image's final REJECT rule; it is saved with `netfilter-persistent` (skip with `SKIP_IPTABLES=1`).
 
 ### 2.2 Format and mount the block volume at /srv/orbit
 
@@ -214,6 +214,43 @@ Open Overview: the **Getting started** checklist walks through the first steps.
 
 - **Device mode:** add the PC, pair folders, enable keep-alive (marked **Recommended**: a standby mostly idles, see [section 10](#10-keep-alive-and-idle-risk-meter) and Settings -> Standby), set up alerts.
 - **arm-free mode:** open `http://arm-free.<tailnet>.ts.net:2283` in a browser and create the Immich admin account first, then add replicas ([section 3.2](#32-replicas-add-device)), set up the phone ([section 6](#6-iphone-setup)) and alerts. Keep-alive is optional.
+
+### 2.7 Migrating an existing device-mode install to arm-free mode
+
+Moves Immich from the PC to arm-free and keeps your photos, albums and users (the PC's last database dump is restored on arm-free). Afterwards the PC is a Receive Only replica. Plan for a short upload pause between steps 1 and 7.
+
+1. **Final sync from the PC.** In Orbit -> Backups run the PC's **Immich DB dump** job (Run now). Wait until Replication shows both folders **Up to date** on arm-free, then stop Immich on the PC so nothing new is uploaded: `cd C:\Immich; docker compose down`. Note the PC's `DB_PASSWORD`, `DB_USERNAME` and the Postgres image line from `C:\Immich\.env` / `docker-compose.yml`.
+2. **Remove the PC from the hub.** Devices -> PC -> Remove. Roles cannot be changed in place (the device's agent config and Syncthing folders depend on the role); the PC is added back as a Replica in step 6.
+3. **Switch arm-free.**
+
+   ```bash
+   cd /opt/orbit-src && sudo git pull
+   # RESTIC_REPOSITORY only if you use restic (also needs /etc/orbit/restic-password)
+   sudo RESTIC_REPOSITORY=<repo> /opt/orbit-src/deploy/arm-free/scripts/install-arm-free.sh --mode arm-free   # add --no-ml to skip ML
+   ```
+
+   The installer backs up `/etc/orbit/agent.json` to `agent.json.bak-<timestamp>` and migrates it in place: deviceId, token, hubUrl and listen are kept; role becomes `primary`; leftover Minecraft services/jobs and the promote block are removed; the 02:30 `immich-db` dump job is added (`prune-dumps` is kept); the restic job is kept only if `/etc/orbit/restic-password` exists and a repository is set. It also adds the iptables rule for port 7420 from Docker bridges, restarts the agent and the hub (which re-reads the role), and starts a **fresh** Immich. Re-running it is safe.
+4. **Restore the PC's database on arm-free** (replaces the fresh, empty database):
+
+   ```bash
+   cd /opt/orbit/deploy/arm-free/immich
+   # set DB_PASSWORD / DB_USERNAME / IMMICH_POSTGRES_IMAGE to the PC's values from step 1
+   sudo nano .env
+   sudo docker compose down
+   sudo rm -rf /srv/orbit/immich-db && sudo mkdir /srv/orbit/immich-db
+   sudo docker compose up -d database && sleep 15
+   DUMP=$(ls -t /srv/orbit/immich-db-dumps/*.sql.gz | head -n 1); echo "$DUMP"
+   gunzip -c "$DUMP" | sudo docker exec -i immich_postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres'
+   sudo docker compose up -d
+   ```
+
+   The library at `/srv/orbit/immich-library` is already the PC's library (it was the standby replica), so the restored database finds every file. Log in at `http://arm-free.<tailnet>.ts.net:2283` with your existing account and spot-check old and new photos.
+5. **Turn arm-free into the source.** Nothing to do by hand: when the first replica pairs, the hub switches arm-free's `immich-library` and `immich-db-dumps` folders to **Send Only** (and replicas to **Receive Only**). Agents update themselves from the hub within a few minutes of the `git pull`; check Devices for the new agent version first.
+6. **Add the PC back as a Replica.** Devices -> Add device -> Replica, Windows. Choose the folder paths (the PC's existing Syncthing folders keep their current location). Run the command in an elevated PowerShell: it backs up the PC's old `C:\ProgramData\Orbit\agent.json` (role primary) and replaces it, restarts the agent, and the hub pairs it. The PC's folders become Receive Only with versioning. Docker Desktop and `C:\Immich` are no longer needed on the PC; remove them once you are happy (keep `C:\Immich\.env` until then).
+7. **Phones:** Immich app -> server URL `http://arm-free.<tailnet>.ts.net:2283` ([section 6](#6-iphone-setup)).
+8. **Check:** Devices shows no warnings (a role mismatch or missing replica paths is flagged on the device card); Replication shows each replica as **Receive Only** with **Versioning: staggered**; Backups shows `immich-db` succeeding after 02:30. Then delete the old standby database: `sudo rm -rf /srv/orbit/immich-standby-db`.
+
+If the hub still lists arm-free as Standby after step 3, `docker restart orbit-web`. If a replica folder shows "type unknown" or "No versioning", the Replication page shows the likely reason under the folder.
 
 ## 3. Set up the PC and replicas
 

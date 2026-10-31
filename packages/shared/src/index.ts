@@ -416,6 +416,8 @@ export interface DeviceSummary extends DeviceRecord {
   online: boolean;
   status: AgentStatus | null; // last known
   statusFetchedAt: number | null;
+  agentRole: DeviceRole | null; // role the agent itself reports (agent.json); differs from `role` after a relabel or stale config
+  warnings: string[]; // configuration problems worth showing on the device card
 }
 
 // GET    /api/devices                                   -> DeviceSummary[]
@@ -475,7 +477,9 @@ export interface ReplicaHealth {
     lagMs: number | null; // now - lastInSyncAt (0 when up to date)
     versioning: string | null; // replica-side versioning type
     replicaType: SyncthingFolderType | null;
+    issue: string | null; // likely reason when type is unknown / not Receive Only / no versioning
   }[];
+  warnings: string[]; // same as DeviceSummary.warnings
 }
 
 export interface ReplicationHealth {

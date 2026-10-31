@@ -1,7 +1,7 @@
 "use client";
 
 import type { DeviceSummary } from "@orbit/shared";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, TriangleAlert } from "lucide-react";
 import { OnlineDot, PlatformIcon, RoleBadge, tailscaleText } from "@/components/devices/device-parts";
 import { OfflineBadge } from "@/components/offline-badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,21 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatBytes, timeAgo } from "@/lib/format";
+
+/** Configuration warnings from the hub (role mismatch, missing replica paths, pairing). */
+export function DeviceWarnings({ warnings, className }: { warnings: string[]; className?: string }) {
+  if (!warnings.length) return null;
+  return (
+    <ul className={`space-y-1.5 rounded-xl bg-amber-500/10 p-2.5 text-xs text-amber-900 dark:text-amber-200 ${className ?? ""}`}>
+      {warnings.map((w) => (
+        <li key={w} className="flex gap-2">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>{w}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 interface Actions {
   onEdit: (d: DeviceSummary) => void;
@@ -60,6 +75,7 @@ function DeviceCard({ d, onEdit, onRemove }: Actions & { d: DeviceSummary }) {
           </div>
           <RoleBadge role={d.role} />
         </div>
+        <DeviceWarnings warnings={d.warnings} />
         <DiskLine d={d} />
         {disks.length > 1 ? (
           <ul className="space-y-0.5 text-xs text-muted-foreground tabular-nums">
@@ -115,10 +131,11 @@ export function DeviceList({ devices, onEdit, onRemove }: Actions & { devices: D
           <TableBody>
             {devices.map((d) => (
               <TableRow key={d.id}>
-                <TableCell>
+                <TableCell className="max-w-80">
                   <span className="flex items-center gap-2 font-medium">
                     <PlatformIcon platform={d.status?.health.platform ?? d.platform} className="size-4" /> {d.name}
                   </span>
+                  <DeviceWarnings warnings={d.warnings} className="mt-2 whitespace-normal" />
                 </TableCell>
                 <TableCell>
                   <RoleBadge role={d.role} />

@@ -191,6 +191,9 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
             : [...cur.devices, { deviceID: req.remoteDeviceId }];
           const body: Record<string, unknown> = { devices };
           if (f.versioning) body.versioning = versioningBody(f.versioning);
+          // The hub decides the direction: after a mode switch an old Send Only source becomes a
+          // Receive Only replica and vice versa. Receive Only never deletes local-only files by itself.
+          if (cur.type !== f.type) body.type = f.type;
           await st(`/rest/config/folders/${id}`, { method: "PATCH", body });
         } else {
           // path "" means "use the existing folder"; it cannot create a new one.

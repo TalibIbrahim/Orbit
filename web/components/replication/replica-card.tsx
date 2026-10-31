@@ -1,5 +1,6 @@
 import type { ReplicaHealth, ReplicaState } from "@orbit/shared";
-import { Server } from "lucide-react";
+import { Info, Server } from "lucide-react";
+import { DeviceWarnings } from "@/components/devices/device-list";
 import { OfflineBadge } from "@/components/offline-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,15 +56,25 @@ function FolderRow({ f }: { f: Folder }) {
         <span className={cn("font-medium", TONE_TEXT[lag.tone])}>{lag.text}</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <Badge variant="outline">
-          {f.replicaType === "receiveonly" ? "Receive Only" : (f.replicaType ?? "type unknown")}
-        </Badge>
+        {f.replicaType === "receiveonly" ? (
+          <Badge variant="outline">Receive Only</Badge>
+        ) : f.replicaType ? (
+          <ToneBadge tone="warning">{f.replicaType}</ToneBadge>
+        ) : (
+          <Badge variant="outline">type unknown</Badge>
+        )}
         {f.versioning ? (
           <Badge variant="outline">Versioning: {f.versioning}</Badge>
         ) : (
           <ToneBadge tone="danger">No versioning</ToneBadge>
         )}
       </div>
+      {f.issue ? (
+        <p className="flex gap-1.5 text-xs text-muted-foreground">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          <span>{f.issue}</span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -79,7 +90,8 @@ export function ReplicaCard({ replica }: { replica: ReplicaHealth }) {
           <OfflineBadge online={replica.online} lastSeen={replica.lastSeen} />
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
+        <DeviceWarnings warnings={replica.warnings} />
         {replica.folders.length === 0 ? (
           <p className="text-sm text-muted-foreground">No shared folders paired yet.</p>
         ) : (

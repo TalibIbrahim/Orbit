@@ -5,6 +5,7 @@ import type { AlertEvent, DeviceRecord } from "@orbit/shared";
 
 export interface DeviceRow extends DeviceRecord {
   token: string;
+  pairError: string | null;
   pendingPair: boolean;
   agentVersion: string | null;
 }
@@ -41,6 +42,7 @@ function open(): DatabaseSync {
   // Migrations for databases created by older versions.
   const cols = (db.prepare("PRAGMA table_info(devices)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("replica_paths")) db.exec("ALTER TABLE devices ADD COLUMN replica_paths TEXT");
+  if (!cols.includes("pair_error")) db.exec("ALTER TABLE devices ADD COLUMN pair_error TEXT");
   return db;
 }
 
@@ -75,6 +77,7 @@ function toDevice(r: Row): DeviceRow {
     immichTailscaleUrl: (r.immich_tailscale_url as string) ?? null,
     replicaPaths: parsePaths(r.replica_paths),
     token: r.token as string,
+    pairError: (r.pair_error as string) ?? null,
     pendingPair: !!r.pending_pair,
     agentVersion: (r.agent_version as string) ?? null,
   };
@@ -83,7 +86,7 @@ function toDevice(r: Row): DeviceRow {
 /** Strip server-only fields. */
 export function toRecord(d: DeviceRow): DeviceRecord {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { token, pendingPair, agentVersion, ...rec } = d;
+  const { token, pendingPair, agentVersion, pairError, ...rec } = d;
   return rec;
 }
 
@@ -102,7 +105,7 @@ export const primaryDevice = (): DeviceRow | null => listDevices().find((d) => d
 const COLS: Record<string, string> = {
   name: "name", role: "role", platform: "platform", agentUrl: "agent_url", enrolled: "enrolled",
   lastSeen: "last_seen", syncthingDeviceId: "syncthing_device_id", immichLanUrl: "immich_lan_url",
-  immichTailscaleUrl: "immich_tailscale_url", token: "token", replicaPaths: "replica_paths", pendingPair: "pending_pair", agentVersion: "agent_version",
+  immichTailscaleUrl: "immich_tailscale_url", token: "token", replicaPaths: "replica_paths", pairError: "pair_error", pendingPair: "pending_pair", agentVersion: "agent_version",
 };
 
 export function insertDevice(d: Pick<DeviceRow, "id" | "name" | "role" | "token"> & Partial<DeviceRow>): DeviceRow {

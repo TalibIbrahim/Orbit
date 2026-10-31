@@ -1,7 +1,7 @@
 import type { ReplicaHealth, ReplicaState, ReplicationHealth, SyncthingSummary } from "@orbit/shared";
 import { cachedOnly } from "./agents";
 import { db, listDevices, primaryDevice } from "./db";
-import { ONLINE_MS } from "./devices";
+import { deviceWarnings, ONLINE_MS, replicaFolderIssue } from "./devices";
 import { getSettings } from "./settings";
 
 interface SyncRow { device_id: string; folder_id: string; last_in_sync_at: number | null; last_completion: number | null }
@@ -40,6 +40,7 @@ export function computeReplication(now = Date.now()): ReplicationHealth {
     const ids = [...sharedIds].filter((id) => own?.folders.some((f) => f.id === id) || pst?.folders.some((f) => f.id === id));
     return {
       deviceId: d.id, name: d.name, role: d.role, online, lastSeen: d.lastSeen,
+      warnings: deviceWarnings(d),
       folders: ids.map((id) => {
         const mine = own?.folders.find((f) => f.id === id);
         const pf = pst?.folders.find((f) => f.id === id);
@@ -62,6 +63,7 @@ export function computeReplication(now = Date.now()): ReplicationHealth {
           lagMs: state === "up-to-date" ? 0 : Math.max(0, now - (last ?? d.createdAt)),
           versioning: mine ? mine.versioning || null : null,
           replicaType: mine?.type ?? null,
+          issue: replicaFolderIssue(d, id, own, online),
         };
       }),
     };

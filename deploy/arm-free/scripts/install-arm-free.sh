@@ -16,9 +16,11 @@
 # creates /srv/orbit/*; installs the systemd units; writes /etc/orbit/agent.json.
 # Re-running is safe (idempotent); existing config/.env files are never overwritten.
 #
-# Env (optional): ORBIT_PRIMARY_MODE (same as --mode), IMMICH_ML=0 (same as --no-ml), ORBIT_HUB_URL, ORBIT_DEVICE_ID, TS_AUTHKEY, SKIP_NEVERIDLE=1, SKIP_START=1
+# Env (optional): ORBIT_PRIMARY_MODE (same as --mode), IMMICH_ML=0 (same as --no-ml), ORBIT_HUB_URL, ORBIT_DEVICE_ID, TS_AUTHKEY, SKIP_NEVERIDLE=1, SKIP_START=1, SKIP_IPTABLES=1
 #
-# NETWORK NOTE: this script opens nothing publicly and does not touch iptables.
+# NETWORK NOTE: this script opens nothing publicly. Its only iptables change is an INPUT accept
+# for the agent port (7420) from Docker bridges (br+, docker0) so the orbit-web container can
+# reach the host agent; it is saved with netfilter-persistent (SKIP_IPTABLES=1 to skip).
 # In the OCI console the VCN security list should have NO ingress rules except SSH (22).
 # Recommended: `tailscale up --ssh`, confirm you can `ssh` over the tailnet, then remove
 # the port-22 ingress rule too. Ubuntu images on OCI ship restrictive iptables rules
@@ -224,11 +226,87 @@ if [ ! -f "$CFG" ]; then
   echo " token   : ${TOKEN}"
   echo " The hub registers this agent automatically (compose mounts /etc/orbit/agent.json)."
   echo "----------------------------------------------------------------"
+elif [ "$MODE" = "arm-free" ]; then
+  # Existing config (e.g. from a device-mode install): migrate it in place to the arm-free primary
+  # layout. deviceId, token, hubUrl, listen and any other custom fields are kept.
+  #  - role "primary", no promote block, keep-alive not on by default
+  #  - Minecraft services/jobs removed (leftovers from older Orbit versions)
+  #  - "immich" service and the 02:30 "immich-db" dump job taken from agent.primary.example.json
+  #  - restic jobs kept/added only if /etc/orbit/restic-password exists and a repository is set
+  #    (RESTIC_REPOSITORY env, or the value already in the restic job); otherwise removed
+  #  - other jobs (e.g. prune-dumps) kept
+  # Idempotent: the file is only rewritten (with a .bak-<timestamp> copy) when something changes.
+  CUR_REPO="$(jq -r '[.jobs[]? | select(.kind == "restic" or .id == "restic") | .env.RESTIC_REPOSITORY // empty][0] // empty' "$CFG" 2>/dev/null || true)"
+  REPO="${RESTIC_REPOSITORY:-$CUR_REPO}"
+  RESTIC_OK=false
+  if [ -f /etc/orbit/restic-password ] && [ -n "$REPO" ] && [[ "$REPO" != REPLACE* ]]; then RESTIC_OK=true; fi
+  jq --slurpfile tpl "${ARM_FREE_DIR}/agent.primary.example.json" --argjson resticOk "$RESTIC_OK" --arg repo "$REPO" '
+    def mc: ([.id, .name, .command] | map(. // "") | join(" ")) | test("minecraft|mc-backup"; "i");
+    def isRestic: .kind == "restic" or .id == "restic";
+    $tpl[0] as $t
+    | .role = "primary"
+    | del(.promote)
+    | (if .keepalive then .keepalive.defaultEnabled = false else . end)
+    | .services = ([$t.services[] | select(.name == "immich")]
+        + [(.services // [])[] | select((mc | not) and .name != "immich")]
+        | . as $s | $s + [$t.services[] | select(.name as $n | any($s[]; .name == $n) | not)])
+    | .jobs = ((.jobs // []) as $j
+        | [$j[] | select((mc | not) and (isRestic | not) and .id != "immich-db")] as $keep
+        | [$t.jobs[] | select(.id == "immich-db")]
+          + $keep
+          + (if $resticOk then
+               ([$j[] | select(isRestic)] | if length > 0 then . else [$t.jobs[] | select(isRestic)] end)
+               | map(.env = ((.env // {}) + {RESTIC_REPOSITORY: $repo, RESTIC_PASSWORD_FILE: (.env.RESTIC_PASSWORD_FILE // "/etc/orbit/restic-password")}))
+             else [] end))
+  ' "$CFG" > "${CFG}.new"
+  if cmp -s <(jq -S . "$CFG") <(jq -S . "${CFG}.new"); then
+    rm -f "${CFG}.new"
+    log "${CFG} already matches arm-free primary mode"
+  else
+    BAK="${CFG}.bak-$(date +%Y%m%d-%H%M%S)"
+    cp -p "$CFG" "$BAK"
+    cat "${CFG}.new" > "$CFG"   # keep owner/mode of the original file
+    rm -f "${CFG}.new"
+    chown root:1000 "$CFG"
+    chmod 640 "$CFG"
+    CFG_CHANGED=1
+    log "migrated ${CFG} to arm-free primary mode (backup: ${BAK})"
+    log "  jobs: $(jq -r '[.jobs[].id] | join(", ")' "$CFG")"
+    [ "$RESTIC_OK" = true ] || warn "restic job left out: needs /etc/orbit/restic-password and RESTIC_REPOSITORY (re-run with RESTIC_REPOSITORY=... to add it)"
+  fi
 else
   log "${CFG} exists; left untouched"
-  WANT_ROLE=standby; [ "$MODE" = "arm-free" ] && WANT_ROLE=primary
   HAVE_ROLE="$(jq -r '.role // empty' "$CFG" 2>/dev/null || true)"
-  [ "$HAVE_ROLE" = "$WANT_ROLE" ] || warn "${CFG} has role '${HAVE_ROLE}' but mode ${MODE} expects '${WANT_ROLE}'; edit it by hand (see agent.*example.json)"
+  [ "$HAVE_ROLE" = "standby" ] || warn "${CFG} has role '${HAVE_ROLE}' but device mode expects 'standby'; edit it by hand (see agent.example.json)"
+fi
+
+# --- iptables: agent port from Docker bridges ---------------------------------------------
+# OCI Ubuntu images end the INPUT chain with a REJECT, which also blocks orbit-web (a container
+# on a compose bridge br-<id>) from reaching the host agent at <TAILSCALE_IP>:7420. Accept only
+# that port, only from Docker bridge interfaces; tailnet/public access is unchanged.
+if [ "${SKIP_IPTABLES:-0}" != "1" ]; then
+  AGENT_PORT="$(jq -r '.listen.port // 7420' "$CFG" 2>/dev/null || echo 7420)"
+  case "$AGENT_PORT" in ''|*[!0-9]*) AGENT_PORT=7420 ;; esac
+  if ! command -v netfilter-persistent >/dev/null 2>&1; then
+    log "installing iptables-persistent"
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | debconf-set-selections
+    apt-get install -y --no-install-recommends iptables-persistent netfilter-persistent
+  fi
+  CHANGED=0
+  for IFACE in 'br+' docker0; do
+    RULE=(INPUT -i "$IFACE" -p tcp --dport "$AGENT_PORT" -m comment --comment orbit-agent-from-docker -j ACCEPT)
+    if ! iptables -C "${RULE[@]}" 2>/dev/null; then
+      # Insert at the top so it precedes the image's final REJECT rule.
+      iptables -I "${RULE[@]:0:1}" 1 "${RULE[@]:1}"
+      CHANGED=1
+      log "iptables: accept tcp/${AGENT_PORT} on ${IFACE}"
+    fi
+  done
+  if [ "$CHANGED" = "1" ] || ! grep -q orbit-agent-from-docker /etc/iptables/rules.v4 2>/dev/null; then
+    netfilter-persistent save >/dev/null
+    log "iptables rules saved (netfilter-persistent)"
+  fi
 fi
 
 # --- systemd -----------------------------------------------------------------------------
@@ -238,6 +316,9 @@ install -m 0644 "${ARM_FREE_DIR}"/systemd/orbit-update.service /etc/systemd/syst
 install -m 0644 "${ARM_FREE_DIR}"/systemd/orbit-update.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable orbit-update.timer
+if [ "${SKIP_START:-0}" = "1" ] && [ "${CFG_CHANGED:-0}" = "1" ]; then
+  systemctl try-restart orbit-agent.service || true   # running agent must pick up the migrated config
+fi
 if [ "${SKIP_START:-0}" != "1" ]; then
   systemctl enable orbit-agent.service
   systemctl restart orbit-agent.service
@@ -245,6 +326,8 @@ if [ "${SKIP_START:-0}" != "1" ]; then
   if [ -n "$TS_IP" ]; then
     log "starting the main stack (hub, syncthing)"
     (cd "$ARM_FREE_DIR" && docker compose up -d --build)
+    # The hub reads agent.json (role) only at startup.
+    [ "${CFG_CHANGED:-0}" = "1" ] && docker restart orbit-web >/dev/null && log "restarted orbit-web to pick up the new agent role"
     if [ "$MODE" = "arm-free" ]; then
       log "starting Immich (primary, fresh database)"
       (cd "${ARM_FREE_DIR}/immich" && docker compose up -d)

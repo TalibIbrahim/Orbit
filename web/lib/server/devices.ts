@@ -30,8 +30,74 @@ export function summarize(d: DeviceRow, now = Date.now()): DeviceSummary {
     online: d.lastSeen != null && now - d.lastSeen < ONLINE_MS,
     status: st,
     statusFetchedAt: st ? (statusFetchedAt(d.id) ?? null) : null,
+    agentRole: st?.health?.role ?? null,
+    warnings: deviceWarnings(d),
   };
 }
+
+const ROLE_NAME: Record<DeviceRole, string> = { primary: "Primary", standby: "Standby", replica: "Replica" };
+
+/** Role the device's agent reports (from its agent.json), if known. */
+export const agentRoleOf = (d: DeviceRow): DeviceRole | null => cachedOnly<AgentStatus>(d.id, "/status")?.health?.role ?? null;
+
+function roleMismatchText(d: DeviceRow, agentRole: DeviceRole): string {
+  const fix = d.id === localAgentId()
+    ? "Re-run install-arm-free.sh with the right --mode; it migrates /etc/orbit/agent.json."
+    : `Remove the device and add it again as a ${ROLE_NAME[d.role]}; the installer backs up and replaces the old agent.json.`;
+  return `The agent reports role "${agentRole}" but the hub has this device as "${d.role}". The agent's config is from another install or the role was relabelled. ${fix}`;
+}
+
+/** Configuration problems shown on the device card and the Replication page. */
+export function deviceWarnings(d: DeviceRow): string[] {
+  const out: string[] = [];
+  if (!d.enrolled) return out;
+  const agentRole = agentRoleOf(d);
+  if (agentRole && agentRole !== d.role) out.push(roleMismatchText(d, agentRole));
+  if (d.role === "standby" && getSettings().primaryMode === "arm-free") {
+    out.push(
+      d.id === localAgentId()
+        ? 'arm-free primary mode has no standby, but this agent is still a standby. Re-run install-arm-free.sh --mode arm-free to migrate /etc/orbit/agent.json to role "primary".'
+        : "arm-free primary mode has no standby. Remove the device and add it again as a Replica.",
+    );
+  }
+  if (d.role === "replica" && Object.keys(d.replicaPaths).length === 0) {
+    out.push(
+      `No replica folder paths saved: Syncthing folders go to the default location (${defaultReplicaPath("<folder>", d.platform)}). ` +
+        "To choose the folders, remove the device and add it again as a Replica.",
+    );
+  }
+  if (d.pendingPair && needsPairing(d.role)) out.push(`Not paired with the primary yet${d.pairError ? `: ${d.pairError}` : ""}. The hub retries every minute.`);
+  return out;
+}
+
+/**
+ * Likely reason a replica folder shows type unknown / not Receive Only / no versioning.
+ * `own` = the replica's own Syncthing summary (null if never fetched).
+ */
+export function replicaFolderIssue(d: DeviceRow, folderId: string, own: SyncthingSummary | null, online: boolean): string | null {
+  const mine = own?.folders.find((f) => f.id === folderId);
+  if (mine) {
+    if (mine.type !== "receiveonly") return `This folder is "${mine.type}" on the device, expected Receive Only. It existed before pairing; change it in Syncthing or remove the device and add it again.`;
+    if (!mine.versioning) return "No versioning on this replica: the folder existed before pairing or was created by hand. Remove and re-add the device, or enable staggered versioning in Syncthing.";
+    return null;
+  }
+  if (!own) return online ? "No Syncthing data from this device's agent yet (it is polled every 5 minutes)." : "Device offline and no Syncthing data was ever received from it.";
+  if (!own.available) return `The agent cannot reach Syncthing on this device${own.error ? ` (${own.error})` : ""}. Check that Syncthing is running.`;
+  const agentRole = agentRoleOf(d);
+  if (agentRole && agentRole !== d.role) return roleMismatchText(d, agentRole);
+  if (d.pendingPair) return `Not paired yet${d.pairError ? `: ${d.pairError}` : ""}. The hub retries every minute.`;
+  return "The folder is not shared with this device: it may have been removed in Syncthing. Remove the device and add it again to re-pair.";
+}
+
+const localAgentId = (): string | null => {
+  const file = process.env.ORBIT_LOCAL_AGENT_CONFIG;
+  if (!file) return null;
+  try {
+    return (JSON.parse(readFileSync(file, "utf8")) as { deviceId?: string }).deviceId ?? null;
+  } catch {
+    return null;
+  }
+};
 
 const statusFetchedAt = (id: string) => getCache<AgentStatus>(id, "/status")?.fetchedAt;
 
@@ -78,11 +144,12 @@ export async function pairWithPrimary(dev: DeviceRow): Promise<string | null> {
       })),
     };
     await agentSend(dev, "POST", "/syncthing/pair", onDevice);
-    updateDevice(dev.id, { pendingPair: false });
+    updateDevice(dev.id, { pendingPair: false, pairError: null });
     return null;
   } catch (e) {
-    updateDevice(dev.id, { pendingPair: true });
-    return errMsg(e);
+    const msg = errMsg(e);
+    updateDevice(dev.id, { pendingPair: true, pairError: msg });
+    return msg;
   }
 }
 
