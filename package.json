@@ -2,6 +2,7 @@
   "name": "orbit",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "workspaces": ["packages/*", "agent", "web"],
   "scripts": {
     "build:agent": "npm run build -w agent",

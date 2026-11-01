@@ -2,6 +2,42 @@
 
 Self-hosted storage and server dashboard, delivered as a mobile-first PWA. It watches a small fleet (an Oracle Always Free Arm VM called "arm-free", a Windows PC, optional extra replicas), keeps an Immich photo library replicated with Syncthing, and gives you one place to see usage, replication health, backups and failover.
 
+![Orbit: every photo, three places, proven](docs/screenshots/hero.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/offload.png" alt="Phone backup verification: safe to offload"></td>
+    <td width="50%"><img src="docs/screenshots/failover.png" alt="Replication and one-button failover"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/oracle-free-tier.png" alt="Built for Oracle Always Free: idle-risk meter and quota"></td>
+    <td width="50%"><img src="docs/screenshots/backups.png" alt="Backups dashboard"></td>
+  </tr>
+</table>
+
+<sub>Screenshots use a demo fleet (four mock agents with generated data) driving the real dashboard.</sub>
+
+## Why Orbit (and why not just Immich?)
+
+Orbit does not replace Immich. Immich is the photo app; Orbit runs around it and takes care of keeping the library safe in more than one place.
+
+Immich's own docs say it is not a backup and tell you to follow 3-2-1. Doing that by hand means Syncthing or rsync, a cron job for database dumps, something for monitoring, and a lot of trust. Orbit puts those pieces together and checks that they actually work.
+
+| | Immich alone | Immich + Orbit |
+|---|---|---|
+| Photo library, apps, search, faces | Yes | Yes (unchanged, it is still Immich) |
+| Database dumps | Built-in job on the server | Dumps are also replicated to every copy, and Orbit shows whether the newest dump is older than the newest upload |
+| Off-site copy | Up to you | Oracle Always Free VM as a standby (up to 200 GB, $0), set up by one installer |
+| More copies at home | Up to you | Add a NAS or laptop from the dashboard with a one-line install. Each one is a Receive Only replica with file versioning |
+| "Is it safe to free up my phone?" | The app checks that the **server** has the file (one copy) | Orbit checks every upload against the files on **each** copy (size for all files, checksum for recent uploads and a random sample) and gives you the exact cutoff date to use in the app |
+| Server dies | Immich is down until you rebuild it | Device mode: one button starts Immich on the standby from the newest dump |
+| Oracle reclaiming an "idle" free VM | n/a | Idle-risk meter against Oracle's real thresholds, plus keep-alive |
+| Fleet health | Server stats for one machine | CPU/RAM/disk/network per device and per service, folder size limits, Discord/email alerts, all in a phone PWA |
+| Network exposure | Your choice | Tailscale only, no public ports |
+
+**Who it is for:** people who already run (or want to run) Immich at home, care about not losing family photos, and don't want to pay for cloud storage or glue five tools together. If you already have a proper 3-2-1 setup with monitoring you trust, you may not need it. If you have one disk and good intentions, you probably do.
+
+
 ## Choose a mode
 
 The setting `primaryMode` decides where Immich runs. Choose it when you install arm-free (`install-arm-free.sh --mode device|arm-free`, env `ORBIT_PRIMARY_MODE`, default `device`). It is shown and editable in Settings -> General, but changing it there does not move data or reconfigure Immich/Syncthing.
@@ -632,3 +668,7 @@ Hub environment: `ORBIT_DATA_DIR`, `ORBIT_HUB_URL`, `ORBIT_PASSWORD`, `DISCORD_W
 - **Oracle Always Free:** Ampere A1 allowance is the first 1,500 OCPU-hours and 9,000 GB-hours per month, which equals 2 OCPU + 12 GB running continuously. 200 GB total boot plus block storage, at most five volume backups. Idle reclamation: an instance is flagged when, over 7 days, CPU 95th percentile, network and memory utilisation are all under 20% (the memory criterion applies to A1 shapes only). Source: <https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm>
 - **Immich:** v3.3.0 (7 Oct 2026; v3.0 in July 2026), <https://immich.app/blog>. Official `ghcr.io/immich-app` images publish `linux/arm64`, <https://github.com/orgs/immich-app/packages/container/package/immich-server>. iOS app: Settings -> Networking -> Automatic URL switching (local Wi-Fi SSID + local URL, external URLs tried in order, needs Location permission): <https://linuxiac.com/immich-1-122-brings-hdr-video-support-in-the-mobile-app/>, <https://github.com/immich-app/immich/discussions/31865>.
 - **Syncthing:** v2.1.x (2.1.6 in Oct 2026), <https://www.versio.io/en/product-release-end-of-life-eol-syncthing-foundation-syncthing.html>. Folder types `sendreceive`, `sendonly`, `receiveonly`, `receiveencrypted`; `paused`; versioning `trashcan`, `simple`, `staggered`, `external`; `minDiskFree`: <https://docs.syncthing.net/users/config.html>, <https://docs.syncthing.net/users/versioning.html>. REST: `X-API-Key` header, `PATCH /rest/config/folders/{id}` with `{"paused":true}`, `/rest/db/completion`: <https://docs.syncthing.net/dev/rest.html>, <https://docs.syncthing.net/rest/config.html>.
+
+## License
+
+[MIT](LICENSE)
