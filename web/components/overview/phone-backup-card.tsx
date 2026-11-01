@@ -3,7 +3,7 @@
 import type { BackupVerifyResponse } from "@orbit/shared";
 import Link from "next/link";
 import { Smartphone } from "lucide-react";
-import { CopyRow, formatDate, ReasonList, StatusChip, VerifyButton } from "@/components/offload/verify-parts";
+import { CopyRow, DumpAction, formatDate, ReasonList, StateNote, StatusChip, VerifyButton } from "@/components/offload/verify-parts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -43,12 +43,14 @@ export function PhoneBackupCard({
           <>
             <div className="flex flex-wrap items-center gap-2">
               <StatusChip state={latest.state} />
+              <StateNote note={latest.stateNote} />
               <span className="text-xs text-muted-foreground">
                 Verified through {formatDate(latest.watermark)}
                 {latest.newestAsset ? `, newest upload ${formatDate(latest.newestAsset)}` : ""}
               </span>
             </div>
             <ReasonList reasons={latest.reasons} />
+            <DumpAction dump={latest.dump} />
             {latest.error ? <p className="text-sm text-destructive">{latest.error}</p> : null}
             {latest.copies.map((c) => (
               <CopyRow key={c.deviceId} copy={c} />

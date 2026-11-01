@@ -21,7 +21,16 @@ interface StFolder {
   versioning?: { type?: string; [k: string]: unknown };
   [k: string]: unknown;
 }
-interface StDevice { deviceID: string; name: string; [k: string]: unknown }
+interface StDevice { deviceID: string; name: string; paused?: boolean; [k: string]: unknown }
+interface StCompletion {
+  completion?: number;
+  globalBytes?: number;
+  globalItems?: number;
+  needBytes?: number;
+  needItems?: number;
+  needDeletes?: number;
+  remoteState?: string; // "valid" | "paused" | "notSharing" | "unknown" (Syncthing >= 1.23)
+}
 
 function candidateConfigPaths(explicit?: string): string[] {
   if (explicit) return [explicit];
@@ -98,6 +107,7 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
     ]);
     const me = status.myID;
     const names = new Map(devices.map((d) => [d.deviceID, d.name || d.deviceID.slice(0, 7)]));
+    const devPaused = new Map(devices.map((d) => [d.deviceID, !!d.paused]));
     const validTime = (iso: unknown): number | null => {
       const t = Date.parse(String(iso ?? ""));
       return Number.isFinite(t) && new Date(t).getUTCFullYear() >= 2000 ? t : null;
@@ -111,21 +121,38 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
         );
         const num = (k: string) => (typeof s[k] === "number" ? (s[k] as number) : 0);
         const needItems = num("needTotalItems") || num("needFiles") + num("needDirectories") + num("needSymlinks") + num("needDeletes");
+        const globalItems = num("globalTotalItems") || num("globalFiles") + num("globalDirectories") + num("globalSymlinks");
+        const localItems = num("localTotalItems") || num("localFiles") + num("localDirectories") + num("localSymlinks");
         const peers: SyncthingPeerProgress[] = await Promise.all(
           f.devices
             .filter((d) => d.deviceID !== me)
             .map(async (d) => {
-              const c = await st<{ completion: number; needItems: number; needBytes: number }>(
-                `/rest/db/completion?folder=${q}&device=${encodeURIComponent(d.deviceID)}`,
-              ).catch(() => null);
+              // Syncthing refuses completion for a paused folder; never report that (or any API error) as 0%.
+              let c: StCompletion | null = null;
+              let completionError: string | undefined;
+              if (f.paused) completionError = "folder paused on this device";
+              else {
+                c = await st<StCompletion>(`/rest/db/completion?folder=${q}&device=${encodeURIComponent(d.deviceID)}`).catch((e) => {
+                  completionError = (e as Error).message.slice(0, 200);
+                  return null;
+                });
+                if (c && typeof c.completion !== "number") {
+                  completionError = "no completion in Syncthing response";
+                  c = null;
+                }
+              }
               return {
                 deviceId: d.deviceID,
                 name: names.get(d.deviceID) ?? d.deviceID.slice(0, 7),
                 connected: conns.connections?.[d.deviceID]?.connected ?? false,
                 lastSeen: validTime(stats[d.deviceID]?.lastSeen),
-                completion: c?.completion ?? 0,
-                needItems: c?.needItems ?? 0,
+                completion: c ? (c.completion as number) : null,
+                needItems: (c?.needItems ?? 0) + (c?.needDeletes ?? 0),
                 needBytes: c?.needBytes ?? 0,
+                ...(c && typeof c.globalBytes === "number" ? { globalBytes: c.globalBytes } : {}),
+                ...(c && typeof c.globalItems === "number" ? { globalItems: c.globalItems } : {}),
+                paused: (devPaused.get(d.deviceID) ?? false) || c?.remoteState === "paused",
+                ...(completionError ? { completionError } : {}),
               };
             }),
         );
@@ -138,6 +165,8 @@ export function createSyncthing(ctx: Ctx): SyncthingApi {
           state: f.paused ? "paused" : String(s.state ?? "unknown"),
           globalBytes: num("globalBytes"),
           localBytes: num("localBytes"),
+          globalItems,
+          localItems,
           needItems,
           needBytes: num("needBytes"),
           stateChanged: validTime(s.stateChanged),

@@ -244,9 +244,14 @@ export interface SyncthingPeerProgress {
   name: string;
   connected: boolean;
   lastSeen: number | null;
-  completion: number; // 0..100
+  /** 0..100 from /rest/db/completion; null when Syncthing could not tell (folder paused, API error, older agents send 0). */
+  completion: number | null;
   needItems: number;
   needBytes: number;
+  globalBytes?: number; // what the peer should have (completion response)
+  globalItems?: number;
+  paused?: boolean; // this device is paused in our Syncthing config
+  completionError?: string; // why completion is null
 }
 
 export interface SyncthingFolderSummary {
@@ -258,6 +263,8 @@ export interface SyncthingFolderSummary {
   state: string; // idle | scanning | syncing | error | ...
   globalBytes: number;
   localBytes: number;
+  globalItems?: number; // files + directories + symlinks in the global state
+  localItems?: number;
   needItems: number; // what THIS device still needs
   needBytes: number;
   stateChanged: number | null;
@@ -462,7 +469,26 @@ export interface EnrollResponse {
   pairError?: string;
 }
 
-export type ReplicaState = "up-to-date" | "syncing" | "offline" | "unknown";
+/**
+ * offline: the replica's agent is not reachable. paused: the folder (or the device) is paused on either side.
+ * peer-offline: the agent is up but Syncthing has no connection to arm-free. nothing-to-sync: global size is 0.
+ */
+export type ReplicaState =
+  | "up-to-date" | "syncing" | "offline" | "unknown" | "paused" | "peer-offline" | "nothing-to-sync" | "error";
+
+/** Raw Syncthing numbers behind a replica folder's state, shown in "Details" so problems can be diagnosed from the UI. */
+export interface ReplicaSyncDetail {
+  source: "replica" | "host" | "none"; // whose view decided the state
+  /** The replica's view of its own folder (/rest/db/status on the replica). */
+  local: { state: string; paused: boolean; globalBytes: number; globalItems: number | null; needBytes: number; needItems: number; localBytes: number } | null;
+  /** arm-free's view of the replica (/rest/db/completion?device=<replica>). */
+  remote: {
+    connected: boolean; devicePaused: boolean; completion: number | null; globalBytes: number | null; globalItems: number | null;
+    needBytes: number; needItems: number; error: string | null;
+  } | null;
+  hostFolderPaused: boolean | null; // arm-free's own copy of the folder is paused
+  pauseReason: string | null; // e.g. "paused by the sync schedule"
+}
 
 export interface ReplicaHealth {
   deviceId: string; // hub device id
@@ -482,6 +508,8 @@ export interface ReplicaHealth {
     versioning: string | null; // replica-side versioning type
     replicaType: SyncthingFolderType | null;
     issue: string | null; // likely reason when type is unknown / not Receive Only / no versioning
+    reason?: string | null; // why the state is what it is (paused by schedule, peer offline, ...)
+    detail?: ReplicaSyncDetail;
   }[];
   warnings: string[]; // same as DeviceSummary.warnings
 }
@@ -664,14 +692,33 @@ export interface CopyVerification {
   hashMismatch: number;
   extra: number; // files not known to Immich (informational)
   problems: CopyProblem[]; // first 50
-  syncOk: boolean; // Syncthing: 100%, 0 needed, no errors, not paused, versioning on (replicas)
-  syncIssues: string[];
+  /** Files on arm-free's disk that Immich does not list (e.g. sidecars, orphans); replicas must hold them too. */
+  otherFiles?: number;
+  otherPaths?: string[]; // first 20
+  syncOk: boolean; // no Syncthing problem that should block offload (paused / peer offline do not block a clean manifest)
+  syncIssues: string[]; // blocking Syncthing problems
+  syncNotes?: string[]; // informational Syncthing state (paused by schedule, peer offline, ...)
+  syncFolders?: { folderId: string; label: string; state: ReplicaState; completion: number | null; reason: string | null; detail?: ReplicaSyncDetail }[];
   watermark: number | null; // every expected file created at or before this time is verified on this copy
   verifiedAt: number | null;
   error?: string;
 }
 
 export type OffloadState = "safe" | "not-yet" | "unknown";
+
+/**
+ * Immich database dump status on arm-free. no-job: the agent has no pgdump job configured;
+ * none: the job exists but has never produced a dump; failed: the last run failed and no dump exists;
+ * stale: newest dump is older than the newest upload; ok.
+ */
+export type DumpState = "no-job" | "none" | "failed" | "stale" | "ok" | "unknown";
+export interface DumpStatus {
+  state: DumpState;
+  newest: number | null;
+  jobId: string | null;
+  hostDeviceId: string | null;
+  detail: string | null;
+}
 
 /**
  * Uploads per Immich user. Immich v3 no longer exposes the uploading device on assets, so sources are
@@ -704,6 +751,9 @@ export interface VerificationRun extends VerificationRunSummary {
   sources: PhoneSource[];
   newestAsset: number | null;
   newestDump: number | null;
+  dump?: DumpStatus;
+  /** Short qualifier for a safe result, e.g. "sync paused by schedule". */
+  stateNote?: string | null;
 }
 
 export interface BackupVerifyResponse {

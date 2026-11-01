@@ -4,12 +4,14 @@
  * trashes or modifies photos; the result is advice shown in the UI and sent as notifications.
  */
 import type {
-  BackupsResponse, BackupVerifyResponse, CopyVerification, ExpectedFile, FolderLimitsResponse, ManifestEntry,
+  BackupsResponse, BackupVerifyResponse, CopyVerification, DumpStatus, ExpectedFile, FolderLimitsResponse, ManifestEntry,
   ManifestHashResponse, ManifestPage, ManifestStatus, PhoneSource, SyncthingSummary, VerificationRun,
   VerificationRunSummary, VerifyTrigger,
 } from "@orbit/shared";
+import { holdText } from "@/lib/sync/replica-state";
 import {
-  capWatermark, diffCopy, offloadDecision, overallWatermark, pickHashSample, recommendedCutoff,
+  capWatermark, diffCopy, dumpStatus, isExcludedPath, offloadDecision, overallWatermark, pickHashSample, recommendedCutoff,
+  syncVerdict, type SyncFolderInfo,
 } from "@/lib/verify/logic";
 import { agentErrMsg, agentSend, cachedOnly, errMsg, isOnline } from "./agents";
 import { db, type DeviceRow, listDevices } from "./db";
@@ -73,7 +75,8 @@ async function readManifest(d: DeviceRow): Promise<Map<string, ManifestEntry>> {
   while (after !== null) {
     const q: string = `/manifest/entries?folder=${FOLDER}&limit=${PAGE}${after ? `&after=${encodeURIComponent(after)}` : ""}`;
     const page: ManifestPage = await agentSend<ManifestPage>(d, "GET", q, undefined, 60_000);
-    for (const e of page.entries) out.set(e.path, e);
+    // Same exclusions on every copy (older agents still list e.g. desktop.ini or conflict copies).
+    for (const e of page.entries) if (!isExcludedPath(e.path)) out.set(e.path, e);
     after = page.next;
   }
   return out;
@@ -103,45 +106,69 @@ async function hashOnDevice(d: DeviceRow, manifest: Map<string, ManifestEntry>, 
 
 // ───────────────────────────── sync / dump state ─────────────────────────────
 
-function syncState(d: DeviceRow, isHost: boolean): { syncOk: boolean; issues: string[]; versioning: boolean; pausedByOrbit: boolean } {
+interface CopySync {
+  syncOk: boolean;
+  issues: string[];
+  notes: string[];
+  pausedNote: string | null;
+  versioning: boolean;
+  pausedByOrbit: boolean;
+  folders: NonNullable<CopyVerification["syncFolders"]>;
+}
+
+/**
+ * Syncthing state of one copy, as a secondary signal to the file manifest (see syncVerdict):
+ * it only blocks with a concrete reason, never because sync is paused on purpose or a peer is offline.
+ */
+function syncState(d: DeviceRow, isHost: boolean, manifestClean: boolean, dump: DumpStatus): CopySync {
   const issues: string[] = [];
+  const notes: string[] = [];
+  let pausedNote: string | null = null;
   const own = cachedOnly<SyncthingSummary>(d.id, "/syncthing");
   const folder = own?.folders.find((f) => f.id === FOLDER);
   const limits = cachedOnly<FolderLimitsResponse>(d.id, "/folders")?.folders ?? [];
   const pausedByOrbit = limits.some((f) => f.syncthingFolderId === FOLDER && f.pausedByOrbit);
   if (pausedByOrbit) issues.push("Syncthing paused by a folder limit");
-  if (!own?.available) issues.push("Syncthing not reachable");
-  else if (!folder) issues.push("Immich library folder not shared with this device");
-  else {
-    if (folder.paused) {
-      const hold = desiredHold();
-      issues.push(hold.paused ? `sync paused ${hold.reason === "manual" ? "by you (Pause sync)" : "by the sync schedule"}` : "Immich library folder is paused");
+  const hold = holdText(desiredHold());
+  const folders: CopySync["folders"] = [];
+
+  if (isHost) {
+    if (!own?.available) notes.push(`Syncthing not reachable${own?.error ? ` (${own.error})` : ""}`);
+    else if (!folder) notes.push("Immich library folder is not shared by Syncthing here");
+    else {
+      if (folder.paused && !pausedByOrbit) {
+        pausedNote = hold ?? "folder paused";
+        notes.push(`library sync ${hold ?? "paused"}`);
+      }
+      if (folder.state === "error") issues.push("Syncthing reports a folder error");
     }
-    if (folder.state === "error") issues.push("Syncthing reports a folder error");
+    return { syncOk: issues.length === 0, issues, notes, pausedNote, versioning: true, pausedByOrbit, folders };
   }
-  let versioning = true;
-  if (!isHost) {
-    const rep = computeReplication().replicas.find((r) => r.deviceId === d.id);
-    const lib = rep?.folders.find((f) => f.folderId === FOLDER);
-    const dumps = rep?.folders.find((f) => f.folderId === DUMPS_FOLDER);
-    if (!lib || lib.state !== "up-to-date") issues.push(`library not fully synced (${lib ? (lib.completion != null ? `${Math.floor(lib.completion)}%` : lib.state) : "unknown"})`);
-    else if ((lib.needItems ?? 0) > 0) issues.push(`${lib.needItems} items still needed`);
-    if (dumps && dumps.state !== "up-to-date") issues.push("database dumps not fully synced");
-    versioning = !!(lib?.versioning || folder?.versioning);
-    if (!versioning) issues.push("versioning is off");
-  }
-  return { syncOk: issues.length === 0, issues, versioning, pausedByOrbit };
+
+  const rep = computeReplication().replicas.find((r) => r.deviceId === d.id);
+  const info = (id: string): SyncFolderInfo | null => {
+    const f = rep?.folders.find((x) => x.folderId === id);
+    if (!f) return null;
+    folders.push({ folderId: f.folderId, label: f.label, state: f.state, completion: f.completion, reason: f.reason ?? null, ...(f.detail ? { detail: f.detail } : {}) });
+    return { folderId: id, state: f.state, completion: f.completion, needItems: f.needItems, needBytes: f.needBytes, reason: f.reason ?? null, lastInSyncAt: f.lastInSyncAt };
+  };
+  const lib = info(FOLDER);
+  const dumps = info(DUMPS_FOLDER);
+  const v = syncVerdict({ manifestClean, library: lib, dumps, dump });
+  if (!(pausedByOrbit && lib?.state === "paused")) issues.push(...v.issues);
+  else issues.push(...v.issues.filter((s) => !s.startsWith("library sync paused")));
+  notes.push(...v.notes);
+  pausedNote = v.pausedNote;
+  const libRow = rep?.folders.find((f) => f.folderId === FOLDER);
+  const versioning = !!(libRow?.versioning || folder?.versioning);
+  if (!versioning) issues.push("versioning is off");
+  return { syncOk: issues.length === 0, issues, notes, pausedNote, versioning, pausedByOrbit, folders };
 }
 
-/** Newest successful Immich DB dump on the Immich host (pgdump job artifact). */
-function newestDump(host: DeviceRow): number | null {
-  const jobs = cachedOnly<BackupsResponse>(host.id, "/backups")?.jobs ?? [];
-  // Only real dump files count (older agents also reported Syncthing's marker file as the artifact).
-  const times = jobs
-    .filter((j) => j.kind === "pgdump")
-    .map((j) => (j.latestArtifact && /\.sql(\.gz)?$/i.test(j.latestArtifact.name) ? j.latestArtifact.mtime : j.lastRun?.ok ? j.lastRun.finishedAt : null));
-  const ok = times.filter((t): t is number => typeof t === "number");
-  return ok.length ? Math.max(...ok) : null;
+/** Immich DB dump status on the Immich host (pgdump job). */
+function hostDump(host: DeviceRow, newestAsset: number | null): DumpStatus {
+  const jobs = cachedOnly<BackupsResponse>(host.id, "/backups")?.jobs ?? null;
+  return dumpStatus(jobs, newestAsset, host.id);
 }
 
 // ───────────────────────────── run ─────────────────────────────
@@ -233,35 +260,40 @@ async function runVerification(trigger: VerifyTrigger): Promise<void> {
     run.reasons = ["No Immich host device registered"];
     return finish("unknown");
   }
-  run.newestDump = newestDump(host);
+  run.dump = hostDump(host, run.newestAsset);
+  run.newestDump = run.dump.newest;
   const replicas = listDevices().filter((d) => d.enrolled && d.id !== host.id && (d.role === "replica" || d.role === "standby"));
   const seed = new Date(startedAt).toISOString().slice(0, 10);
   const hashPaths = pickHashSample(snap.expected, startedAt, cfg.hashRecentDays, cfg.samplePercent, seed);
 
+  const known = new Set(snap.expected.map((e) => e.path));
+  const dump = run.dump;
   const verifyCopy = async (d: DeviceRow, isHost: boolean, reference?: Map<string, ManifestEntry>) => {
     if (!isOnline(d)) return { copy: emptyCopy(d, isHost, "offline - not verified this run"), manifest: null };
     try {
-      const status = await freshManifest(d, startedAt);
+      await freshManifest(d, startedAt);
       const manifest = await readManifest(d);
-      // Replicas must also hold files Immich does not list (e.g. XMP sidecars) that exist on the host.
-      let expected: ExpectedFile[] = snap.expected;
-      if (reference) {
-        const known = new Set(snap.expected.map((e) => e.path));
-        const hostOnly: ExpectedFile[] = [];
-        for (const e of reference.values()) {
-          if (known.has(e.path)) continue;
-          hostOnly.push({ path: e.path, assetId: "", ownerId: "", kind: /\.xmp$/i.test(e.path) ? "sidecar" : "photo", size: e.size, sha1: e.sha1, createdAt: e.mtimeMs });
-        }
-        expected = [...snap.expected, ...hostOnly];
+      // Every copy must hold the files on the host's disk that Immich does not list (e.g. XMP sidecars, orphans),
+      // the host included, so all copies are checked against the same list and show the same counts.
+      const ref = reference ?? manifest;
+      const hostOnly: ExpectedFile[] = [];
+      for (const e of ref.values()) {
+        if (known.has(e.path)) continue;
+        hostOnly.push({ path: e.path, assetId: "", ownerId: "", kind: /\.xmp$/i.test(e.path) ? "sidecar" : "photo", size: e.size, sha1: e.sha1, createdAt: e.mtimeMs });
       }
+      const expected: ExpectedFile[] = [...snap.expected, ...hostOnly];
       await hashOnDevice(d, manifest, hashPaths);
       const diff = diffCopy(expected, manifest, { reference });
-      const sync = syncState(d, isHost);
+      const sync = syncState(d, isHost, diff.missing + diff.sizeMismatch + diff.hashMismatch === 0, dump);
+      let bytes = 0;
+      for (const e of manifest.values()) bytes += e.size;
       const copy: CopyVerification = {
         deviceId: d.id, name: d.name, isHost, online: true, lastSeen: d.lastSeen, expectedFiles: expected.length,
-        presentFiles: diff.presentFiles, files: status.files, bytes: status.bytes, hashed: diff.hashed, missing: diff.missing,
+        presentFiles: diff.presentFiles, files: manifest.size, bytes, hashed: diff.hashed, missing: diff.missing,
         sizeMismatch: diff.sizeMismatch, hashMismatch: diff.hashMismatch, extra: diff.extra, problems: diff.problems,
-        syncOk: sync.syncOk, syncIssues: sync.issues, watermark: diff.watermark, verifiedAt: Date.now(),
+        otherFiles: hostOnly.length, otherPaths: hostOnly.slice(0, 20).map((e) => e.path),
+        syncOk: sync.syncOk, syncIssues: sync.issues, syncNotes: sync.notes, syncFolders: sync.folders,
+        watermark: diff.watermark, verifiedAt: Date.now(),
       };
       return { copy, manifest, sync };
     } catch (e) {
@@ -282,7 +314,7 @@ async function runVerification(trigger: VerifyTrigger): Promise<void> {
   );
   run.watermark = capWatermark(wm, run.newestDump);
   const decision = offloadDecision({
-    configured: true, immichReachable: true, newestAsset: run.newestAsset, newestDump: run.newestDump, watermark: run.watermark,
+    configured: true, immichReachable: true, newestAsset: run.newestAsset, newestDump: run.newestDump, dump: run.dump, watermark: run.watermark,
     minCopies: cfg.minCopies, requireNonHost: cfg.requireNonHostCopy,
     copies: results.map(({ copy, sync }) => ({
       name: copy.name, isHost: copy.isHost, online: copy.online, verified: copy.verifiedAt != null && !copy.error,
@@ -292,6 +324,15 @@ async function runVerification(trigger: VerifyTrigger): Promise<void> {
   });
   run.reasons = [...decision.reasons, ...run.copies.filter((c) => c.error && c.online).map((c) => `${c.name}: ${c.error}`)];
   if (snap.skipped) run.reasons.push(`${snap.skipped} assets outside the Immich library folder (e.g. external libraries) are not checked`);
+  // A clean result while sync is paused on purpose says so, with the exact reason.
+  // The exact per-copy reason is in each copy's syncNotes.
+  const paused = results.map((r) => r.sync?.pausedNote).find((n): n is string => !!n);
+  const hold = desiredHold();
+  run.stateNote = decision.state !== "safe" || !paused
+    ? null
+    : hold.paused
+      ? hold.reason === "manual" ? "sync paused by you" : "sync paused by schedule"
+      : `sync paused: ${paused}`;
   finish(decision.state);
   await notifyAfterRun(run);
 }

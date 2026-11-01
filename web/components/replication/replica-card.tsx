@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { SyncDetails } from "./sync-details";
 import { TONE_TEXT, ToneBadge, type Tone } from "./tone-badge";
 
 type Folder = ReplicaHealth["folders"][number];
@@ -19,6 +20,10 @@ const STATE_TONE: Record<ReplicaState, Tone> = {
   syncing: "primary",
   offline: "muted",
   unknown: "muted",
+  paused: "muted",
+  "peer-offline": "warning",
+  "nothing-to-sync": "success",
+  error: "danger",
 };
 
 function stateLabel(f: Folder): string {
@@ -29,6 +34,14 @@ function stateLabel(f: Folder): string {
       return f.completion != null ? `Syncing ${Math.floor(f.completion)}%` : "Syncing";
     case "offline":
       return "Offline";
+    case "paused":
+      return "Paused";
+    case "peer-offline":
+      return "Peer offline";
+    case "nothing-to-sync":
+      return "Nothing to sync";
+    case "error":
+      return "Error";
     default:
       return "Unknown";
   }
@@ -69,6 +82,8 @@ function FolderRow({ f }: { f: Folder }) {
           <ToneBadge tone="danger">No versioning</ToneBadge>
         )}
       </div>
+      {f.reason ? <p className="text-xs text-muted-foreground">{f.reason}</p> : null}
+      {f.detail ? <SyncDetails detail={f.detail} /> : null}
       {f.issue ? (
         <p className="flex gap-1.5 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0" />

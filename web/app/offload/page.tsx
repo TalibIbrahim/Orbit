@@ -3,7 +3,7 @@
 import type { OffloadState, VerificationRun, VerificationRunSummary } from "@orbit/shared";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { CopyRow, formatDate, ReasonList, StatusChip, VerifyButton } from "@/components/offload/verify-parts";
+import { CopyRow, DumpAction, formatDate, ReasonList, StateNote, StatusChip, VerifyButton } from "@/components/offload/verify-parts";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -101,10 +101,12 @@ export default function OffloadPage() {
                 <CardTitle>Status</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3">
-                <div>
+                <div className="flex flex-wrap items-center gap-3">
                   <StatusChip state={state} large />
+                  <StateNote note={latest?.stateNote} />
                 </div>
                 <ReasonList reasons={latest?.reasons ?? []} />
+                <DumpAction dump={latest?.dump} />
                 {latest?.error ? <p className="text-sm text-destructive">{latest.error}</p> : null}
                 <div className="grid gap-1 text-sm sm:grid-cols-2">
                   <div>

@@ -1,5 +1,5 @@
 // Pure, dependency-free logic for phone backup verification (read-only advice only).
-import type { CopyProblem, ExpectedFile, ManifestEntry, OffloadState } from "@orbit/shared";
+import type { CopyProblem, DumpStatus, ExpectedFile, JobSummary, ManifestEntry, OffloadState, ReplicaState } from "@orbit/shared";
 
 const DAY_MS = 86_400_000;
 
@@ -18,6 +18,24 @@ export function immichPathToRelative(originalPath: string): string | null {
     }
   }
   return null;
+}
+
+const OS_JUNK = new Set(["desktop.ini", "thumbs.db", "ehthumbs.db"]);
+
+/**
+ * True for paths that are never Immich originals and are left out of every manifest, so host and replica
+ * counts compare like for like: anything outside upload/ and library/, Syncthing's own entries (.stfolder,
+ * .stignore, .stversions, .syncthing.*.tmp, ~syncthing~*.tmp, *.syncthing.tmp), conflict copies, other hidden
+ * entries, partial/temp files and OS junk (desktop.ini, Thumbs.db). Mirrors the agent's skipName so older
+ * agents' manifests are filtered the same way.
+ */
+export function isExcludedPath(rel: string): boolean {
+  const parts = rel.replace(/\\/g, "/").split("/");
+  if (parts.length < 2 || (parts[0] !== "upload" && parts[0] !== "library")) return true;
+  return parts.some((p) => {
+    const l = p.toLowerCase();
+    return p.startsWith(".") || p.startsWith("~syncthing~") || l.endsWith(".tmp") || l.endsWith(".partial") || l.includes(".sync-conflict-") || OS_JUNK.has(l);
+  });
 }
 
 /** Immich checksums are base64 SHA-1; return lowercase hex. */
@@ -135,6 +153,146 @@ export function overallWatermark(
   return bestNonHost ? bestNonHost.watermark : null;
 }
 
+// ───────────────────────────── database dumps ─────────────────────────────
+
+/** Newest real dump time of one pgdump job (a .sql / .sql.gz artifact, else the last successful run). */
+function jobDumpTime(j: JobSummary): number | null {
+  if (j.latestArtifact && /\.sql(\.gz)?$/i.test(j.latestArtifact.name)) return j.latestArtifact.mtime;
+  return j.lastRun?.ok && j.lastRun.finishedAt ? j.lastRun.finishedAt : null;
+}
+
+/**
+ * Immich database dump status on the host. Separates "no dump job configured", "job exists but no dump yet",
+ * "only failed runs", and "newest dump older than the newest upload". jobs === null: the host has not reported.
+ */
+export function dumpStatus(jobs: JobSummary[] | null, newestAsset: number | null, hostDeviceId: string | null): DumpStatus {
+  const base = { hostDeviceId, newest: null, jobId: null };
+  if (jobs === null) return { ...base, state: "unknown", detail: "arm-free has not reported its backup jobs yet" };
+  const dumpJobs = jobs.filter((j) => j.kind === "pgdump");
+  if (dumpJobs.length === 0) {
+    return {
+      ...base, state: "no-job",
+      detail: "No Immich database dump job on arm-free. Re-run install-arm-free.sh --mode arm-free; it adds the immich-db job to /etc/orbit/agent.json.",
+    };
+  }
+  let best: { j: JobSummary; t: number } | null = null;
+  for (const j of dumpJobs) {
+    const t = jobDumpTime(j);
+    if (t !== null && (best === null || t > best.t)) best = { j, t };
+  }
+  if (!best) {
+    const failed = dumpJobs.find((j) => j.lastRun && j.lastRun.ok === false);
+    if (failed) {
+      return {
+        ...base, state: "failed", jobId: failed.id,
+        detail: `No database dump yet: the last ${failed.name} run failed${failed.lastRun?.exitCode != null ? ` (exit ${failed.lastRun.exitCode})` : ""}`,
+      };
+    }
+    const running = dumpJobs.find((j) => j.running);
+    return { ...base, state: "none", jobId: (running ?? dumpJobs[0]).id, detail: running ? "The first database dump is running now" : "No database dump exists yet" };
+  }
+  if (newestAsset !== null && best.t < newestAsset) {
+    return { ...base, state: "stale", newest: best.t, jobId: best.j.id, detail: `Newest database dump (${fmtDate(best.t)}) is older than the newest upload (${fmtDate(newestAsset)})` };
+  }
+  return { ...base, state: "ok", newest: best.t, jobId: best.j.id, detail: null };
+}
+
+// ───────────────────────────── Syncthing as a secondary signal ─────────────────────────────
+
+export interface SyncFolderInfo {
+  folderId: string;
+  state: ReplicaState;
+  completion: number | null;
+  needItems: number | null;
+  needBytes: number | null;
+  reason: string | null;
+  lastInSyncAt: number | null;
+}
+
+const fmtBytes = (b: number) =>
+  b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${(b / 1e3).toFixed(0)} KB` : `${b} B`;
+
+/**
+ * Turn a replica's Syncthing folder states into blocking issues and informational notes.
+ * The file manifest is the proof of completeness: when it is clean, Syncthing may only block with a
+ * concrete reason (a folder error, or files actively still arriving). Paused (by schedule, by hand),
+ * a disconnected peer, "nothing to sync" and unknown completion are notes, never a downgrade.
+ * Database dumps are not in the manifest, so their folder blocks when it is behind a known dump.
+ */
+export function syncVerdict(input: {
+  manifestClean: boolean;
+  library: SyncFolderInfo | null;
+  dumps: SyncFolderInfo | null;
+  dump: DumpStatus;
+}): { issues: string[]; notes: string[]; pausedNote: string | null } {
+  const issues: string[] = [];
+  const notes: string[] = [];
+  let pausedNote: string | null = null;
+  const why = (f: SyncFolderInfo) => (f.reason ? `: ${f.reason}` : "");
+  const pending = (f: SyncFolderInfo) =>
+    `${f.needItems ?? "?"} item${f.needItems === 1 ? "" : "s"}${f.needBytes ? ` (${fmtBytes(f.needBytes)})` : ""} still to download`;
+
+  const lib = input.library;
+  if (!lib) {
+    (input.manifestClean ? notes : issues).push("library folder not reported by Syncthing");
+  } else {
+    switch (lib.state) {
+      case "up-to-date":
+        break;
+      case "syncing":
+        issues.push(`library still syncing${lib.completion != null ? ` (${Math.floor(lib.completion)}%)` : ""}: ${pending(lib)}`);
+        break;
+      case "error":
+        issues.push(`library${why(lib)}`);
+        break;
+      case "paused":
+        pausedNote ??= lib.reason;
+        (input.manifestClean ? notes : issues).push(`library sync paused${why(lib)}`);
+        break;
+      case "peer-offline":
+        (input.manifestClean ? notes : issues).push(`library peer offline${why(lib)}`);
+        break;
+      case "nothing-to-sync":
+        notes.push("library: nothing to sync (global size 0)");
+        break;
+      default:
+        (input.manifestClean ? notes : issues).push(`library sync state ${lib.state}${why(lib)}`);
+    }
+  }
+
+  // Dumps only matter once a dump exists; "no dump yet" is reported once, by the dump status.
+  const d = input.dumps;
+  const dumpExists = input.dump.newest !== null;
+  if (d && dumpExists) {
+    const newest = input.dump.newest as number;
+    const covered = d.lastInSyncAt !== null && d.lastInSyncAt >= newest;
+    switch (d.state) {
+      case "up-to-date":
+      case "nothing-to-sync":
+        break;
+      case "syncing":
+        issues.push(`database dumps not fully synced: ${pending(d)}`);
+        break;
+      case "error":
+        issues.push(`database dumps${why(d)}`);
+        break;
+      case "paused":
+        pausedNote ??= d.reason;
+        if (covered) notes.push(`database dumps sync paused${why(d)}; in sync since the newest dump`);
+        else if (d.lastInSyncAt !== null) issues.push(`newest database dump (${fmtDate(newest)}) not synced yet: last in sync ${fmtDate(d.lastInSyncAt)}, sync ${d.reason ?? "paused"}`);
+        else notes.push(`database dumps sync paused${why(d)}; not confirmed yet`);
+        break;
+      case "peer-offline":
+        if (covered) notes.push(`database dumps peer offline${why(d)}; in sync since the newest dump`);
+        else issues.push(`newest database dump (${fmtDate(newest)}) not confirmed on this copy${why(d)}`);
+        break;
+      default:
+        notes.push(`database dumps sync state ${d.state}${why(d)}`);
+    }
+  }
+  return { issues, notes, pausedNote };
+}
+
 /** The DB dump must cover the assets: min(w, newestDump); null if either is null. */
 export function capWatermark(w: number | null, newestDump: number | null): number | null {
   if (w === null || newestDump === null) return null;
@@ -146,6 +304,7 @@ export interface OffloadInput {
   immichReachable: boolean;
   newestAsset: number | null;
   newestDump: number | null;
+  dump?: DumpStatus;
   watermark: number | null;
   minCopies: number;
   requireNonHost: boolean;
@@ -190,12 +349,20 @@ export function offloadDecision(input: OffloadInput): { state: OffloadState; rea
     }
   }
 
-  if (input.newestDump === null) reasons.push("No database dump found");
-  else if (input.newestDump < input.newestAsset) {
-    reasons.push(`Newest database dump (${fmtDate(input.newestDump)}) is older than the newest upload (${fmtDate(input.newestAsset)})`);
+  const dump = input.dump;
+  if (dump && dump.state !== "ok") {
+    if (dump.state === "none" || dump.state === "failed") reasons.push(`${dump.detail ?? "No database dump exists yet"}: run the Immich DB dump now (Backups)`);
+    else reasons.push(dump.detail ?? "Database dump status unknown");
+  } else if (!dump) {
+    if (input.newestDump === null) reasons.push("No database dump found");
+    else if (input.newestDump < input.newestAsset) {
+      reasons.push(`Newest database dump (${fmtDate(input.newestDump)}) is older than the newest upload (${fmtDate(input.newestAsset)})`);
+    }
   }
-  if (input.watermark === null) reasons.push("No date is verified on enough copies yet");
-  else if (input.watermark < input.newestAsset) {
+  // Without a dump the watermark is capped to null; that reason is already given above.
+  if (input.watermark === null) {
+    if (input.newestDump !== null || !dump) reasons.push("No date is verified on enough copies yet");
+  } else if (input.watermark < input.newestAsset) {
     reasons.push(`Verified only through ${fmtDate(input.watermark)}, newest upload is ${fmtDate(input.newestAsset)}`);
   }
   return reasons.length ? { state: "not-yet", reasons } : { state: "safe", reasons: [] };

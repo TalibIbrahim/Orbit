@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   immichPathToRelative, base64ToHex, diffCopy, overallWatermark, capWatermark,
-  offloadDecision, recommendedCutoff, pickHashSample, type OffloadInput,
+  offloadDecision, recommendedCutoff, pickHashSample, type OffloadInput, dumpStatus, syncVerdict, isExcludedPath,
 } from "../lib/verify/logic.ts";
 
 const DAY = 86_400_000;
@@ -224,4 +224,95 @@ test("pickHashSample", () => {
   assert.notDeepEqual(a, pickHashSample(exp, now, 7, 5, "other"));
   assert.equal(pickHashSample(exp, now, 7, 0, "seed").length, recent.length);
   assert.equal(pickHashSample(exp, now, 0, 100, "seed").length, 2000);
+});
+
+// ───────────── manifest first, Syncthing second; dump states; exclusions ─────────────
+
+const job = (o: Record<string, unknown> = {}) => ({
+  id: "immich-db", name: "Immich DB dump", kind: "pgdump" as const, schedule: null, nextRunAt: null, retention: null, outputDir: null,
+  outputBytes: null, latestArtifact: null as { name: string; bytes: number; mtime: number } | null, lastRun: null as null | Record<string, unknown>,
+  running: false, restic: null, ...o,
+}) as never;
+const okDump = { state: "ok" as const, newest: T, jobId: "immich-db", hostDeviceId: "h", detail: null };
+const folder = (state: string, o: Record<string, unknown> = {}) => ({
+  folderId: "f", state: state as never, completion: null as number | null, needItems: 0 as number | null, needBytes: 0 as number | null,
+  reason: null as string | null, lastInSyncAt: null as number | null, ...o,
+});
+
+test("dumpStatus: no job, empty dumps folder, failed, stale, ok", () => {
+  assert.equal(dumpStatus(null, T, "h").state, "unknown");
+  const noJob = dumpStatus([job({ kind: "restic", id: "restic" })], T, "h");
+  assert.equal(noJob.state, "no-job");
+  assert.match(noJob.detail ?? "", /install-arm-free\.sh --mode arm-free/);
+  // Job exists but the dumps folder is empty: "no dump exists yet", with the job id for "Run backup now".
+  const none = dumpStatus([job()], T, "h");
+  assert.deepEqual([none.state, none.jobId, none.hostDeviceId, none.newest], ["none", "immich-db", "h", null]);
+  assert.equal(dumpStatus([job({ lastRun: { ok: false, exitCode: 2, finishedAt: T } })], T, "h").state, "failed");
+  // Syncthing's marker is not a dump.
+  assert.equal(dumpStatus([job({ latestArtifact: { name: ".stfolder", bytes: 0, mtime: T } })], T, "h").state, "none");
+  const stale = dumpStatus([job({ latestArtifact: { name: "immich-2026-10-28.sql.gz", bytes: 9, mtime: T - 3 * DAY } })], T, "h");
+  assert.equal(stale.state, "stale");
+  assert.match(stale.detail ?? "", /older than the newest upload/);
+  assert.equal(dumpStatus([job({ latestArtifact: { name: "d.sql.gz", bytes: 9, mtime: T } })], T, "h").state, "ok");
+});
+
+test("offloadDecision: dump states give one clear reason each", () => {
+  const n = (dump: Parameters<typeof offloadDecision>[0]["dump"], newestDump: number | null = null) =>
+    offloadDecision({ ...base(), dump, newestDump, watermark: capWatermark(T, newestDump) });
+  const none = n(dumpStatus([job()], T, "h"));
+  assert.equal(none.state, "not-yet");
+  assert.deepEqual(none.reasons, ["No database dump exists yet: run the Immich DB dump now (Backups)"]);
+  assert.match(n(dumpStatus([], T, "h")).reasons[0], /No Immich database dump job/);
+  assert.equal(n(okDump, T).state, "safe");
+});
+
+test("syncVerdict: matching manifests with completion unknown do not downgrade", () => {
+  const v = syncVerdict({ manifestClean: true, library: folder("unknown", { reason: "arm-free could not report completion" }), dumps: folder("up-to-date"), dump: okDump });
+  assert.deepEqual(v.issues, []);
+  assert.equal(v.notes.length, 1);
+  // ...and the same unknown state does count when files are actually missing.
+  assert.equal(syncVerdict({ manifestClean: false, library: folder("unknown"), dumps: null, dump: okDump }).issues.length, 1);
+});
+
+test("syncVerdict: paused by schedule with a clean manifest is a note with the exact reason", () => {
+  const reason = "paused by the sync schedule (folder paused on PC)";
+  const v = syncVerdict({ manifestClean: true, library: folder("paused", { reason }), dumps: folder("paused", { reason, lastInSyncAt: T + 1 }), dump: okDump });
+  assert.deepEqual(v.issues, []);
+  assert.equal(v.pausedNote, reason);
+  assert.ok(v.notes.some((s) => s.includes(reason)));
+});
+
+test("syncVerdict: disconnected peer with a clean manifest is a note", () => {
+  const v = syncVerdict({ manifestClean: true, library: folder("peer-offline", { reason: "laptop is not connected to arm-free" }), dumps: folder("peer-offline", { lastInSyncAt: T }), dump: okDump });
+  assert.deepEqual(v.issues, []);
+  assert.equal(v.notes.length, 2);
+});
+
+test("syncVerdict: dumps", () => {
+  // Empty dumps folder / no dump yet: not reported here (the dump status says it once).
+  const noDump = dumpStatus([job()], T, "h");
+  assert.deepEqual(syncVerdict({ manifestClean: true, library: folder("up-to-date"), dumps: folder("nothing-to-sync"), dump: noDump }), { issues: [], notes: [], pausedNote: null });
+  assert.deepEqual(syncVerdict({ manifestClean: true, library: folder("up-to-date"), dumps: folder("syncing", { needItems: 1 }), dump: noDump }).issues, []);
+  // A dump exists and is still arriving: blocks with the numbers.
+  const s = syncVerdict({ manifestClean: true, library: folder("up-to-date"), dumps: folder("syncing", { needItems: 1, needBytes: 5e6 }), dump: okDump });
+  assert.deepEqual(s.issues, ["database dumps not fully synced: 1 item (5.0 MB) still to download"]);
+  // Paused before the newest dump arrived: blocks with the reason.
+  const p = syncVerdict({ manifestClean: true, library: folder("up-to-date"), dumps: folder("paused", { reason: "paused by the sync schedule", lastInSyncAt: T - DAY }), dump: okDump });
+  assert.equal(p.issues.length, 1);
+  assert.match(p.issues[0], /not synced yet.*paused by the sync schedule/);
+});
+
+test("syncVerdict: real problems still block a clean manifest", () => {
+  assert.equal(syncVerdict({ manifestClean: true, library: folder("syncing", { completion: 90, needItems: 3 }), dumps: null, dump: okDump }).issues.length, 1);
+  assert.equal(syncVerdict({ manifestClean: true, library: folder("error", { reason: "Syncthing reports a folder error" }), dumps: null, dump: okDump }).issues.length, 1);
+});
+
+test("isExcludedPath: Syncthing, OS and non-original entries never count", () => {
+  for (const p of [
+    ".stfolder", ".stignore", "library/.stfolder", ".stversions/library/a.jpg", "library/.stversions/a~20260101.jpg",
+    "library/a/.syncthing.b.jpg.tmp", "library/a/~syncthing~b.jpg.tmp", "library/a/b.jpg.syncthing.tmp",
+    "library/a/b.sync-conflict-20260101-000000-ABCDEF.jpg", "library/a/desktop.ini", "upload/x/Thumbs.db",
+    "thumbs/u/a.webp", "encoded-video/a.mp4", "backups/dump.sql.gz", "library", "upload/.immich",
+  ]) assert.equal(isExcludedPath(p), true, p);
+  for (const p of ["library/admin/2026/a.heic", "upload/u1/ab/cd/f.jpg", "library/a/b.jpg.xmp"]) assert.equal(isExcludedPath(p), false, p);
 });

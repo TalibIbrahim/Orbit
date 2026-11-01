@@ -49,6 +49,15 @@ test("manifest scan, pagination, rescan, hashing, read-only", async () => {
     put(root, "upload/.immich", "m");
     put(root, "upload/fresh.jpg", "new", false);
     mkdirSync(join(root, ".stfolder"), { recursive: true });
+    // Never counted on any copy, so host and replica manifests compare like for like.
+    put(root, ".stignore", "x");
+    put(root, ".stversions/library/old.jpg", "v");
+    put(root, "library/.stversions/old~20260101-000000.jpg", "v");
+    put(root, "library/admin/2026/c.syncthing.tmp", "t");
+    put(root, "library/admin/2026/c.sync-conflict-20260101-000000-ABCDEFG.heic", "conflict");
+    put(root, "library/admin/desktop.ini", "ini");
+    put(root, "upload/u1/Thumbs.db", "db");
+    put(root, "notes.txt", "outside the originals");
 
     let folders = [{ id: "f1", path: root }];
     const ctx = { db, syncthing: { summary: async () => ({ available: true, folders }) } } as unknown as Ctx;

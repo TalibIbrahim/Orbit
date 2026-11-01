@@ -34,8 +34,25 @@ const MAX_HASH_PATHS = 2000;
 
 interface Progress { scanned: number }
 
-function skipName(name: string): boolean {
-  return name.startsWith(".") || name.startsWith("~syncthing~") || name.endsWith(".partial") || name.endsWith(".tmp");
+/** OS files that Windows / macOS drop into folders a user browses; never Immich originals. */
+const OS_JUNK = new Set(["desktop.ini", "thumbs.db", "ehthumbs.db"]);
+
+/**
+ * Names excluded from every manifest (host and replicas alike), so file counts compare like for like:
+ * Syncthing's own entries (.stfolder, .stignore, .stversions, .syncthing.*.tmp, ~syncthing~*.tmp, *.syncthing.tmp),
+ * conflict copies (*.sync-conflict-*), partial / temp files, any other hidden entry, and OS junk (desktop.ini, Thumbs.db).
+ * Only upload/ and library/ (Immich originals) are walked at all.
+ */
+export function skipName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    name.startsWith(".") ||
+    name.startsWith("~syncthing~") ||
+    lower.endsWith(".partial") ||
+    lower.endsWith(".tmp") ||
+    lower.includes(".sync-conflict-") ||
+    OS_JUNK.has(lower)
+  );
 }
 
 export function validateRelPath(p: unknown): string {
